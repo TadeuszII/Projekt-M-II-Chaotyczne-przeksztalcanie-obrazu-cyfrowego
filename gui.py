@@ -7,6 +7,9 @@ from pathlib import Path  # Import Path for safe filesystem paths.
 
 import cv2  # Import OpenCV as the image-processing library required by the project.
 import numpy as np  # Import NumPy as the array-processing library required by the project.
+from stage1 import scramble_image as stage1_scramble  # Import Stage 1 scrambling algorithm.
+from stage1 import stage1_description  # Import Stage 1 description for the metrics panel.
+from stage1 import unscramble_image as stage1_unscramble  # Import Stage 1 unscrambling algorithm.
 
 from PyQt6.QtCore import Qt  # Import Qt alignment and scaling flags.
 from PyQt6.QtGui import QImage  # Import QImage for converting arrays to Qt images.
@@ -235,7 +238,103 @@ class ProjectGui(QMainWindow):  # Define the main application window.
         metrics_layout.addWidget(self.metrics_box)  # Add the metrics text area to the metrics section.
 
     def _connect_signals(self) -> None:  # Connect widget signals to their action handlers.
+        self.load_button.clicked.connect(self._load_image)  # Load an image from disk.
+        self.scramble_button.clicked.connect(self._run_scramble)  # Run the selected scrambling stage.
+        self.unscramble_button.clicked.connect(self._run_unscramble)  # Run the selected unscrambling stage.
         self.save_button.clicked.connect(self._save_selected_image)  # Handle saving one of the available images.
+
+    def _load_image(self) -> None:  # Load an input image and show it in the original preview.
+        file_path, _ = QFileDialog.getOpenFileName(
+            self,
+            "Wczytaj obraz",
+            str(self.base_dir),
+            "Pliki obrazów (*.png *.jpg *.jpeg *.bmp);;Wszystkie pliki (*)",
+        )
+        if not file_path:
+            return
+
+        loaded_image: np.ndarray | None = cv2.imread(file_path, cv2.IMREAD_COLOR)
+        if loaded_image is None:
+            QMessageBox.critical(self, "Błąd wczytywania", "Nie udało się wczytać wybranego obrazu.")
+            return
+
+        self.original_image = loaded_image
+        self.scrambled_image = None
+        self.restored_image = None
+        self.original_preview.set_numpy_image(self.original_image)
+        self.scrambled_preview.set_placeholder("Brak obrazu przekształconego")
+        self.restored_preview.set_placeholder("Brak obrazu odtworzonego")
+        self.metrics_box.setPlainText(
+            f"Wczytano obraz: {Path(file_path).name}\n"
+            f"Rozdzielczość: {self.original_image.shape[1]} x {self.original_image.shape[0]} px\n\n"
+            f"{stage1_description()}"
+        )
+
+    def _run_scramble(self) -> None:  # Run scrambling for the currently selected stage.
+        if self.original_image is None:
+            QMessageBox.warning(self, "Brak obrazu", "Najpierw wczytaj obraz wejściowy.")
+            return
+
+        if self._selected_stage() != 1:
+            QMessageBox.information(self, "Etap niedostępny", "Obecnie zaimplementowany jest tylko Etap 1.")
+            return
+
+        try:
+            key_text: str = self._active_key_text()
+            self.scrambled_image = stage1_scramble(self.original_image, key_text)
+        except ValueError as error:
+            QMessageBox.warning(self, "Błędny klucz", str(error))
+            return
+
+        self.scrambled_preview.set_numpy_image(self.scrambled_image)
+        self.restored_image = None
+        self.restored_preview.set_placeholder("Brak obrazu odtworzonego")
+        self.metrics_box.setPlainText(
+            "Wykonano scrambling dla Etapu 1.\n"
+            f"Użyty klucz: {self._active_key_label()}\n\n"
+            f"{stage1_description()}\n\n"
+            "Słabość metody: widoczne mogą pozostać kontury, pasy, regularne przejścia i inne duże struktury obrazu,\n"
+            "ponieważ algorytm tylko przestawia piksele przez przesunięcia cykliczne, ale nie zmienia ich wartości."
+        )
+
+    def _run_unscramble(self) -> None:  # Run inverse transformation for the currently selected stage.
+        if self.scrambled_image is None:
+            QMessageBox.warning(self, "Brak obrazu", "Najpierw wykonaj scrambling obrazu.")
+            return
+
+        if self._selected_stage() != 1:
+            QMessageBox.information(self, "Etap niedostępny", "Obecnie zaimplementowany jest tylko Etap 1.")
+            return
+
+        try:
+            key_text = self._active_key_text()
+            self.restored_image = stage1_unscramble(self.scrambled_image, key_text)
+        except ValueError as error:
+            QMessageBox.warning(self, "Błędny klucz", str(error))
+            return
+
+        self.restored_preview.set_numpy_image(self.restored_image)
+        self.metrics_box.setPlainText(
+            "Wykonano unscrambling dla Etapu 1.\n"
+            f"Użyty klucz: {self._active_key_label()}\n\n"
+            "Dla poprawnego klucza obraz powinien zostać odtworzony idealnie.\n"
+            "Dla błędnego klucza wynik zwykle pozostaje zniekształcony, ale metoda nadal nie jest bezpieczna,\n"
+            "bo opiera się tylko na prostych przesunięciach wierszy i kolumn."
+        )
+
+    def _selected_stage(self) -> int:  # Return the selected stage number.
+        checked_button = self.stage_button_group.checkedButton()
+        if checked_button is None:
+            return 1
+        return self.stage_button_group.id(checked_button)
+
+    def _active_key_text(self) -> str:  # Return the currently active key text based on the checkbox state.
+        if self.use_wrong_key_checkbox.isChecked():
+            return self.wrong_key_input.text()
+        return self.correct_key_input.text()
+
+    def _active_key_label(self) -> str:  # Return a human-readable label for the key currently in use.
+        return "klucz błędny" if self.use_wrong_key_checkbox.isChecked() else "klucz poprawny"
 
     def _save_selected_image(self) -> None:  # Let the user choose which image should be saved.
         image_options: list[tuple[str, np.ndarray | None]] = [  # Define saveable image choices.

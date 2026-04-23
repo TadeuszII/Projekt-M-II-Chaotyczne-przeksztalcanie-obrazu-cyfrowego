@@ -1,1 +1,3 @@
 .vscode/settings.json
+*.pyc
+__pycache__/gui.cpython-311.pyc
