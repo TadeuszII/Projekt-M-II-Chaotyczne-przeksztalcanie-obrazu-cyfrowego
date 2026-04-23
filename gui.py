@@ -17,6 +17,8 @@ from stage1_analysis import build_unscramble_analysis_text  # Import Stage 1 exp
 from stage2 import scramble_image as stage2_scramble  # Import Stage 2 scrambling algorithm.
 from stage2 import stage2_description  # Import Stage 2 description for the metrics panel.
 from stage2 import unscramble_image as stage2_unscramble  # Import Stage 2 unscrambling algorithm.
+from stage2_analysis import build_scramble_analysis_text as build_stage2_scramble_analysis_text  # Import raportu analizy po scramblingu Etapu 2.
+from stage2_analysis import build_unscramble_analysis_text as build_stage2_unscramble_analysis_text  # Import raportu analizy po unscramblingu Etapu 2.
 from stage1_analysis import build_scramble_analysis_text  # Import raportu analizy po scramblingu Etapu 1.
 from stage1_analysis import build_unscramble_analysis_text  # Import raportu analizy po unscramblingu Etapu 1.
 
@@ -349,11 +351,15 @@ class ProjectGui(QMainWindow):  # Define the main application window.
             )  # Koniec ustawiania raportu Etapu 1.
             return  # Zakończenie funkcji po ustawieniu raportu Etapu 1.
 
-        self.metrics_box.setPlainText(  # Ustawienie prostego opisu po scramblingu Etapu 2.
-            "Wykonano scrambling dla Etapu 2.\n"
-            f"Użyty klucz: {self._active_key_label()}\n\n"
-            f"{stage2_description()}"
-        )  # Koniec ustawiania opisu Etapu 2.
+        self.metrics_box.setPlainText(  # Ustawienie raportu analitycznego dla Etapu 2 po scramblingu.
+            build_stage2_scramble_analysis_text(  # Budowa raportu eksperymentalnego dla scramblingu Etapu 2.
+                self.original_image,  # Obraz oryginalny jako punkt odniesienia.
+                self.scrambled_image,  # Obraz po scramblingu.
+                self.correct_key_input.text(),  # Tekst klucza poprawnego.
+                self.wrong_key_input.text(),  # Tekst klucza błędnego.
+                self._active_key_label(),  # Informacja, który klucz był użyty operacyjnie.
+            )  # Koniec budowy raportu.
+        )  # Koniec ustawiania raportu Etapu 2.
 
     def _run_unscramble(self) -> None:  # Wykonanie odwrotnej transformacji dla aktualnie wybranego etapu.
         if self.scrambled_image is None:  # Sprawdzenie, czy istnieje obraz przekształcony do odtworzenia.
@@ -389,12 +395,16 @@ class ProjectGui(QMainWindow):  # Define the main application window.
             )  # Koniec ustawiania raportu Etapu 1.
             return  # Zakończenie funkcji po ustawieniu raportu Etapu 1.
 
-        self.metrics_box.setPlainText(  # Ustawienie prostego opisu po unscramblingu Etapu 2.
-            "Wykonano unscrambling dla Etapu 2.\n"
-            f"Użyty klucz: {self._active_key_label()}\n\n"
-            "Dla poprawnego klucza obraz powinien zostać odtworzony idealnie.\n"
-            f"{stage2_description()}"
-        )  # Koniec ustawiania opisu Etapu 2.
+        self.metrics_box.setPlainText(  # Ustawienie raportu analitycznego dla Etapu 2 po unscramblingu.
+            build_stage2_unscramble_analysis_text(  # Budowa raportu eksperymentalnego dla unscramblingu Etapu 2.
+                self.original_image,  # Obraz oryginalny do porównania.
+                self.scrambled_image,  # Obraz wejściowy po scramblingu.
+                self.restored_image,  # Obraz odtworzony.
+                self.correct_key_input.text(),  # Tekst klucza poprawnego.
+                self.wrong_key_input.text(),  # Tekst klucza błędnego.
+                self._active_key_label(),  # Informacja, który klucz był użyty operacyjnie.
+            )  # Koniec budowy raportu.
+        )  # Koniec ustawiania raportu Etapu 2.
 
     def _selected_stage(self) -> int:  # Return the selected stage number.
         checked_button = self.stage_button_group.checkedButton()
