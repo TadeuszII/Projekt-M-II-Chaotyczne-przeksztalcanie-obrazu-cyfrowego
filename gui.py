@@ -1,5 +1,7 @@
+# ---- Moduł / dokumentacja ----
 """PyQt GUI skeleton for the M-II project."""  # Module docstring describing this file.
 
+# ---- Importy ----
 from __future__ import annotations  # Allow postponed evaluation of type hints.
 
 import sys  # Import sys to access command-line arguments and app exit handling.
@@ -33,7 +35,7 @@ from PyQt6.QtWidgets import QSizePolicy  # Import size policy helper.
 from PyQt6.QtWidgets import QVBoxLayout  # Import vertical layout manager.
 from PyQt6.QtWidgets import QWidget  # Import generic Qt widget base class.
 
-
+# ---- Klasa pomocnicza: podgląd obrazu ----
 class ImagePreviewLabel(QLabel):  # Define a reusable preview label for image panels.
     """Simple preview widget with placeholder text and optional image support."""  # Class docstring.
 
@@ -90,6 +92,7 @@ class ImagePreviewLabel(QLabel):  # Define a reusable preview label for image pa
         self.setPixmap(scaled_pixmap)  # Display the scaled pixmap.
 
 
+# ---- Główna klasa GUI ----
 class ProjectGui(QMainWindow):  # Define the main application window.
     """Main PyQt GUI skeleton for the project."""  # Class docstring.
 
@@ -243,32 +246,65 @@ class ProjectGui(QMainWindow):  # Define the main application window.
         self.unscramble_button.clicked.connect(self._run_unscramble)  # Run the selected unscrambling stage.
         self.save_button.clicked.connect(self._save_selected_image)  # Handle saving one of the available images.
 
-    def _load_image(self) -> None:  # Load an input image and show it in the original preview.
-        file_path, _ = QFileDialog.getOpenFileName(
-            self,
-            "Wczytaj obraz",
-            str(self.base_dir),
-            "Pliki obrazów (*.png *.jpg *.jpeg *.bmp);;Wszystkie pliki (*)",
-        )
-        if not file_path:
-            return
+    # ---- Wczytywanie obrazów ----
+    def _load_image(self) -> None:  # Wczytanie obrazu i przypisanie go do wybranego pola podglądu.
+        target_options: list[str] = [  # Lista typów obrazów, które użytkownik może wczytać.
+            "Obraz oryginalny",  # Opcja wczytania obrazu źródłowego.
+            "Obraz przekształcony",  # Opcja wczytania obrazu po scramblingu.
+            "Obraz odtworzony",  # Opcja wczytania obrazu już odtworzonego.
+        ]  # Koniec listy opcji.
+        selected_target, accepted = QInputDialog.getItem(  # Okno wyboru typu obrazu do wczytania.
+            self,  # Rodzic okna dialogowego.
+            "Wczytaj obraz",  # Tytuł okna dialogowego.
+            "Wybierz typ obrazu do wczytania:",  # Treść pytania dla użytkownika.
+            target_options,  # Dostępne opcje wyboru.
+            0,  # Domyślnie zaznaczona pierwsza opcja.
+            False,  # Brak możliwości wpisania własnej wartości.
+        )  # Koniec wywołania okna wyboru.
+        if not accepted:  # Sprawdzenie, czy użytkownik zatwierdził wybór.
+            return  # Zakończenie funkcji po anulowaniu.
 
-        loaded_image: np.ndarray | None = cv2.imread(file_path, cv2.IMREAD_COLOR)
-        if loaded_image is None:
-            QMessageBox.critical(self, "Błąd wczytywania", "Nie udało się wczytać wybranego obrazu.")
-            return
+        file_path, _ = QFileDialog.getOpenFileName(  # Okno wyboru pliku obrazu.
+            self,  # Rodzic okna dialogowego.
+            "Wczytaj obraz",  # Tytuł okna wyboru pliku.
+            str(self.base_dir),  # Domyślny katalog startowy.
+            "Pliki obrazów (*.png *.jpg *.jpeg *.bmp);;Wszystkie pliki (*)",  # Obsługiwane formaty obrazów.
+        )  # Koniec wywołania okna wyboru pliku.
+        if not file_path:  # Sprawdzenie, czy użytkownik wybrał plik.
+            return  # Zakończenie funkcji po anulowaniu.
 
-        self.original_image = loaded_image
-        self.scrambled_image = None
-        self.restored_image = None
-        self.original_preview.set_numpy_image(self.original_image)
-        self.scrambled_preview.set_placeholder("Brak obrazu przekształconego")
-        self.restored_preview.set_placeholder("Brak obrazu odtworzonego")
-        self.metrics_box.setPlainText(
-            f"Wczytano obraz: {Path(file_path).name}\n"
-            f"Rozdzielczość: {self.original_image.shape[1]} x {self.original_image.shape[0]} px\n\n"
-            f"{stage1_description()}"
-        )
+        loaded_image: np.ndarray | None = cv2.imread(file_path, cv2.IMREAD_COLOR)  # Wczytanie obrazu z dysku w trybie kolorowym.
+        if loaded_image is None:  # Sprawdzenie, czy plik został poprawnie odczytany jako obraz.
+            QMessageBox.critical(self, "Błąd wczytywania", "Nie udało się wczytać wybranego obrazu.")  # Komunikat o błędzie wczytania.
+            return  # Zakończenie funkcji po błędzie.
+
+        self._assign_loaded_image(selected_target, loaded_image)  # Przypisanie wczytanego obrazu do wybranego miejsca w aplikacji.
+        self.metrics_box.setPlainText(  # Aktualizacja pola analizy po wczytaniu obrazu.
+            f"Wczytano plik: {Path(file_path).name}\n"  # Nazwa wczytanego pliku.
+            f"Typ obrazu: {selected_target}\n"  # Informacja, do którego pola przypisano obraz.
+            f"Rozdzielczość: {loaded_image.shape[1]} x {loaded_image.shape[0]} px\n\n"  # Rozdzielczość obrazu.
+            f"{stage1_description()}"  # Opis działania Etapu 1.
+        )  # Koniec ustawiania tekstu analizy.
+
+    def _assign_loaded_image(self, target_label: str, loaded_image: np.ndarray) -> None:  # Przypisanie wczytanego obrazu do odpowiedniego slotu w GUI.
+        if target_label == "Obraz oryginalny":  # Sprawdzenie, czy użytkownik wybrał obraz oryginalny.
+            self.original_image = loaded_image  # Zapisanie obrazu jako obrazu wejściowego.
+            self.scrambled_image = None  # Wyczyszczenie starego obrazu przekształconego.
+            self.restored_image = None  # Wyczyszczenie starego obrazu odtworzonego.
+            self.original_preview.set_numpy_image(self.original_image)  # Aktualizacja podglądu obrazu oryginalnego.
+            self.scrambled_preview.set_placeholder("Brak obrazu przekształconego")  # Wyzerowanie podglądu obrazu przekształconego.
+            self.restored_preview.set_placeholder("Brak obrazu odtworzonego")  # Wyzerowanie podglądu obrazu odtworzonego.
+            return  # Zakończenie obsługi dla obrazu oryginalnego.
+
+        if target_label == "Obraz przekształcony":  # Sprawdzenie, czy użytkownik wybrał obraz przekształcony.
+            self.scrambled_image = loaded_image  # Zapisanie obrazu jako wejścia do późniejszego unscramble.
+            self.restored_image = None  # Wyczyszczenie poprzedniego obrazu odtworzonego.
+            self.scrambled_preview.set_numpy_image(self.scrambled_image)  # Aktualizacja podglądu obrazu przekształconego.
+            self.restored_preview.set_placeholder("Brak obrazu odtworzonego")  # Wyzerowanie podglądu obrazu odtworzonego.
+            return  # Zakończenie obsługi dla obrazu przekształconego.
+
+        self.restored_image = loaded_image  # Zapisanie obrazu jako obrazu odtworzonego.
+        self.restored_preview.set_numpy_image(self.restored_image)  # Aktualizacja podglądu obrazu odtworzonego.
 
     def _run_scramble(self) -> None:  # Run scrambling for the currently selected stage.
         if self.original_image is None:
@@ -401,6 +437,7 @@ class ProjectGui(QMainWindow):  # Define the main application window.
         target_label.setPixmap(scaled_logo)  # Display the logo inside the label.
 
 
+# ---- Uruchomienie aplikacji ----
 def main() -> int:  # Define the application entry point.
     app: QApplication = QApplication(sys.argv)  # Create the Qt application object.
     window: ProjectGui = ProjectGui()  # Create the main project window.
