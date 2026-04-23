@@ -12,6 +12,10 @@ import numpy as np  # Import NumPy as the array-processing library required by t
 from stage1 import scramble_image as stage1_scramble  # Import Stage 1 scrambling algorithm.
 from stage1 import stage1_description  # Import Stage 1 description for the metrics panel.
 from stage1 import unscramble_image as stage1_unscramble  # Import Stage 1 unscrambling algorithm.
+from stage1_analysis import build_scramble_analysis_text  # Import Stage 1 experimental analysis for scrambling.
+from stage1_analysis import build_unscramble_analysis_text  # Import Stage 1 experimental analysis for unscrambling.
+from stage1_analysis import build_scramble_analysis_text  # Import raportu analizy po scramblingu Etapu 1.
+from stage1_analysis import build_unscramble_analysis_text  # Import raportu analizy po unscramblingu Etapu 1.
 
 from PyQt6.QtCore import Qt  # Import Qt alignment and scaling flags.
 from PyQt6.QtGui import QImage  # Import QImage for converting arrays to Qt images.
@@ -306,57 +310,63 @@ class ProjectGui(QMainWindow):  # Define the main application window.
         self.restored_image = loaded_image  # Zapisanie obrazu jako obrazu odtworzonego.
         self.restored_preview.set_numpy_image(self.restored_image)  # Aktualizacja podglądu obrazu odtworzonego.
 
-    def _run_scramble(self) -> None:  # Run scrambling for the currently selected stage.
-        if self.original_image is None:
-            QMessageBox.warning(self, "Brak obrazu", "Najpierw wczytaj obraz wejściowy.")
-            return
+    # ---- Operacje Etapu 1 ----
+    def _run_scramble(self) -> None:  # Wykonanie scramblingu dla aktualnie wybranego etapu.
+        if self.original_image is None:  # Sprawdzenie, czy istnieje obraz wejściowy.
+            QMessageBox.warning(self, "Brak obrazu", "Najpierw wczytaj obraz wejściowy.")  # Komunikat o braku obrazu wejściowego.
+            return  # Zakończenie funkcji bez scramblingu.
 
-        if self._selected_stage() != 1:
-            QMessageBox.information(self, "Etap niedostępny", "Obecnie zaimplementowany jest tylko Etap 1.")
-            return
+        if self._selected_stage() != 1:  # Sprawdzenie, czy użytkownik wybrał Etap 1.
+            QMessageBox.information(self, "Etap niedostępny", "Obecnie zaimplementowany jest tylko Etap 1.")  # Informacja o braku innych etapów.
+            return  # Zakończenie funkcji dla nieobsługiwanego etapu.
 
-        try:
-            key_text: str = self._active_key_text()
-            self.scrambled_image = stage1_scramble(self.original_image, key_text)
-        except ValueError as error:
-            QMessageBox.warning(self, "Błędny klucz", str(error))
-            return
+        try:  # Rozpoczęcie sekcji obsługi potencjalnego błędu klucza.
+            key_text: str = self._active_key_text()  # Pobranie aktywnego klucza z GUI.
+            self.scrambled_image = stage1_scramble(self.original_image, key_text)  # Wykonanie scramblingu Etapu 1.
+        except ValueError as error:  # Obsługa błędnego lub pustego klucza.
+            QMessageBox.warning(self, "Błędny klucz", str(error))  # Wyświetlenie komunikatu o błędzie klucza.
+            return  # Zakończenie funkcji po błędzie.
 
-        self.scrambled_preview.set_numpy_image(self.scrambled_image)
-        self.restored_image = None
-        self.restored_preview.set_placeholder("Brak obrazu odtworzonego")
-        self.metrics_box.setPlainText(
-            "Wykonano scrambling dla Etapu 1.\n"
-            f"Użyty klucz: {self._active_key_label()}\n\n"
-            f"{stage1_description()}\n\n"
-            "Słabość metody: widoczne mogą pozostać kontury, pasy, regularne przejścia i inne duże struktury obrazu,\n"
-            "ponieważ algorytm tylko przestawia piksele przez przesunięcia cykliczne, ale nie zmienia ich wartości."
-        )
+        self.scrambled_preview.set_numpy_image(self.scrambled_image)  # Aktualizacja podglądu obrazu przekształconego.
+        self.restored_image = None  # Wyczyszczenie starego obrazu odtworzonego.
+        self.restored_preview.set_placeholder("Brak obrazu odtworzonego")  # Wyzerowanie podglądu obrazu odtworzonego.
+        self.metrics_box.setPlainText(  # Ustawienie raportu analitycznego dla Etapu 1 po scramblingu.
+            build_scramble_analysis_text(
+                self.original_image,
+                self.scrambled_image,
+                self.correct_key_input.text(),
+                self.wrong_key_input.text(),
+                self._active_key_label(),
+            )
+        )  # Koniec ustawiania raportu.
 
-    def _run_unscramble(self) -> None:  # Run inverse transformation for the currently selected stage.
-        if self.scrambled_image is None:
-            QMessageBox.warning(self, "Brak obrazu", "Najpierw wykonaj scrambling obrazu.")
-            return
+    def _run_unscramble(self) -> None:  # Wykonanie odwrotnej transformacji dla aktualnie wybranego etapu.
+        if self.scrambled_image is None:  # Sprawdzenie, czy istnieje obraz przekształcony do odtworzenia.
+            QMessageBox.warning(self, "Brak obrazu", "Najpierw wykonaj scrambling obrazu albo wczytaj obraz przekształcony.")  # Komunikat o braku obrazu wejściowego do unscramblingu.
+            return  # Zakończenie funkcji bez odtwarzania.
 
-        if self._selected_stage() != 1:
-            QMessageBox.information(self, "Etap niedostępny", "Obecnie zaimplementowany jest tylko Etap 1.")
-            return
+        if self._selected_stage() != 1:  # Sprawdzenie, czy użytkownik wybrał Etap 1.
+            QMessageBox.information(self, "Etap niedostępny", "Obecnie zaimplementowany jest tylko Etap 1.")  # Informacja o braku innych etapów.
+            return  # Zakończenie funkcji dla nieobsługiwanego etapu.
 
-        try:
-            key_text = self._active_key_text()
-            self.restored_image = stage1_unscramble(self.scrambled_image, key_text)
-        except ValueError as error:
-            QMessageBox.warning(self, "Błędny klucz", str(error))
-            return
+        try:  # Rozpoczęcie sekcji obsługi potencjalnego błędu klucza.
+            key_text = self._active_key_text()  # Pobranie aktywnego klucza z GUI.
+            self.restored_image = stage1_unscramble(self.scrambled_image, key_text)  # Wykonanie odwrotnej transformacji Etapu 1.
+        except ValueError as error:  # Obsługa błędnego lub pustego klucza.
+            QMessageBox.warning(self, "Błędny klucz", str(error))  # Wyświetlenie komunikatu o błędzie klucza.
+            return  # Zakończenie funkcji po błędzie.
 
-        self.restored_preview.set_numpy_image(self.restored_image)
-        self.metrics_box.setPlainText(
-            "Wykonano unscrambling dla Etapu 1.\n"
-            f"Użyty klucz: {self._active_key_label()}\n\n"
-            "Dla poprawnego klucza obraz powinien zostać odtworzony idealnie.\n"
-            "Dla błędnego klucza wynik zwykle pozostaje zniekształcony, ale metoda nadal nie jest bezpieczna,\n"
-            "bo opiera się tylko na prostych przesunięciach wierszy i kolumn."
-        )
+        self.restored_preview.set_numpy_image(self.restored_image)  # Aktualizacja podglądu obrazu odtworzonego.
+        self.metrics_box.setPlainText(  # Ustawienie raportu analitycznego dla Etapu 1 po unscramblingu.
+            build_unscramble_analysis_text(
+                self.original_image,
+                self.scrambled_image,
+                self.restored_image,
+                self.correct_key_input.text(),
+                self.wrong_key_input.text(),
+                self._active_key_label(),
+            )
+        )  # Koniec ustawiania raportu.
 
     def _selected_stage(self) -> int:  # Return the selected stage number.
         checked_button = self.stage_button_group.checkedButton()
