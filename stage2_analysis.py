@@ -120,9 +120,12 @@ def build_scramble_analysis_text(
             [
                 "",  # Pusta linia dla czytelności.
                 "Wpływ zmiany klucza na wynik:",  # Nagłówek sekcji wpływu klucza.
+                f"- Test minimalnej zmiany klucza można wykonać np. dla pary: {correct_key_text} vs {wrong_key_text}",  # Wskazanie pary kluczy użytej do testu.
                 f"- Średnia różnica między dwoma obrazami scrambled: {_format_metric(key_change_difference['mean_abs_diff'])}",  # Średnia różnica po zmianie klucza.
                 f"- Maksymalna różnica między dwoma obrazami scrambled: {_format_metric(key_change_difference['max_abs_diff'])}",  # Maksymalna różnica po zmianie klucza.
                 f"- Procent zmienionych pikseli po zmianie klucza: {_format_metric(key_change_difference['changed_percent'])}%",  # Odsetek pikseli zmienionych po zmianie klucza.
+                "- Wniosek o efekcie lawinowym: Etap 2 pokazuje większą wrażliwość na zmianę klucza niż Etap 1, ale nie daje pełnego efektu lawinowego w sensie kryptograficznym.",  # Odpowiedź o efekcie lawinowym.
+                "- Powód: zmienia się permutacja pozycji pikseli, ale same wartości pikseli nie są modyfikowane.",  # Uzasadnienie odpowiedzi o efekcie lawinowym.
             ]
         )  # Koniec dopisywania sekcji wpływu klucza.
     else:  # Obsługa sytuacji, gdy nie podano obu kluczy.
@@ -131,6 +134,8 @@ def build_scramble_analysis_text(
                 "",  # Pusta linia dla czytelności.
                 "Wpływ zmiany klucza na wynik:",  # Nagłówek sekcji wpływu klucza.
                 "- Aby policzyć tę analizę, wpisz zarówno klucz poprawny, jak i klucz błędny.",  # Instrukcja dla użytkownika.
+                "- Przykładowy test minimalnej zmiany klucza: klucz123 vs klucz124 albo zmiana jednego znaku.",  # Podpowiedź, jak wykonać test minimalnej zmiany klucza.
+                "- Odpowiedź o efekcie lawinowym: sam wzrost chaosu permutacji nie oznacza pełnego efektu lawinowego, bo wartości pikseli pozostają bez zmian.",  # Odpowiedź o efekcie lawinowym bez pełnych danych liczbowych.
             ]
         )  # Koniec dopisywania informacji pomocniczej.
 
