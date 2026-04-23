@@ -27,7 +27,11 @@ def generate_permutation(pixel_count: int, key_text: str) -> np.ndarray:  # Gene
     seed: int = key_to_seed(key_text)  # Wyliczenie seeda z klucza.
     rng: np.random.Generator = np.random.default_rng(seed)  # Utworzenie generatora losowego sterowanego seedem.
     permutation: np.ndarray = np.arange(pixel_count, dtype=np.int64)  # Utworzenie tablicy indeksów początkowych.
-    rng.shuffle(permutation)  # Przemieszanie indeksów w sposób deterministyczny.
+    for right_index in range(pixel_count - 1, 0, -1):  # Iteracja od końca tablicy zgodnie z algorytmem Fishera-Yatesa.
+        random_index: int = int(rng.integers(0, right_index + 1))  # Losowanie indeksu z zakresu od 0 do aktualnej prawej granicy.
+        temporary_value: np.int64 = permutation[right_index]  # Zapamiętanie wartości z aktualnej pozycji prawej.
+        permutation[right_index] = permutation[random_index]  # Przeniesienie wartości z losowej pozycji na prawą stronę.
+        permutation[random_index] = temporary_value  # Umieszczenie zapamiętanej wartości w pozycji losowej.
     return permutation  # Zwrócenie gotowej permutacji.
 
 
@@ -36,6 +40,28 @@ def inverse_permutation(permutation: np.ndarray) -> np.ndarray:  # Generowanie p
     inverse: np.ndarray = np.empty_like(permutation)  # Utworzenie pustej tablicy na permutację odwrotną.
     inverse[permutation] = np.arange(permutation.size, dtype=permutation.dtype)  # Wpisanie pozycji odwrotnych dla każdego indeksu.
     return inverse  # Zwrócenie permutacji odwrotnej.
+
+
+def permutation_mapping(pixel_count: int, key_text: str) -> tuple[np.ndarray, np.ndarray]:  # Zwrócenie permutacji P i permutacji odwrotnej P^-1.
+    """Return the permutation P and its inverse P^-1 for a given image size and key."""  # Opis funkcji.
+    permutation: np.ndarray = generate_permutation(pixel_count, key_text)  # Wygenerowanie permutacji P.
+    inverse: np.ndarray = inverse_permutation(permutation)  # Wygenerowanie permutacji odwrotnej P^-1.
+    return permutation, inverse  # Zwrócenie obu funkcji indeksowych.
+
+
+def verify_inverse_relation(pixel_count: int, key_text: str, sample_count: int = 5) -> list[tuple[int, int, int]]:  # Przygotowanie przykładów sprawdzających P^-1(P(i)) = i.
+    """Return sample triples (i, P(i), P^-1(P(i))) for formal verification."""  # Opis funkcji.
+    if pixel_count <= 0:  # Ochrona przed pustą domeną indeksów.
+        return []  # Zwrócenie pustej listy przykładów.
+    permutation, inverse = permutation_mapping(pixel_count, key_text)  # Pobranie funkcji P i P^-1.
+    sample_total: int = min(sample_count, pixel_count)  # Ograniczenie liczby przykładów do rozmiaru domeny.
+    sample_indices: np.ndarray = np.linspace(0, pixel_count - 1, num=sample_total, dtype=np.int64)  # Wybór reprezentatywnych indeksów z całego zakresu.
+    verification_rows: list[tuple[int, int, int]] = []  # Lista wyników weryfikacji dla wybranych indeksów.
+    for index in sample_indices:  # Iteracja po wybranych indeksach domeny.
+        mapped_index: int = int(permutation[index])  # Obliczenie P(i).
+        restored_index: int = int(inverse[mapped_index])  # Obliczenie P^-1(P(i)).
+        verification_rows.append((int(index), mapped_index, restored_index))  # Zapisanie pełnej trójki do raportu.
+    return verification_rows  # Zwrócenie przykładów potwierdzających odwracalność.
 
 
 # ---- Etap 2: scrambling ----
@@ -75,5 +101,5 @@ def stage2_description() -> str:  # Tekst opisu Etapu 2.
     return (  # Zwrócenie gotowego opisu.
         "Etap 2 wykonuje czystą permutację pozycji pikseli sterowaną kluczem.\n"  # Krótki opis operacji.
         "Wartości pikseli nie są zmieniane, zmienia się tylko ich kolejność.\n"  # Wyjaśnienie natury transformacji.
-        "Algorytm jest odwracalny dzięki zastosowaniu permutacji i jej odwrotności."  # Wyjaśnienie odwracalności.
+        "Permutacja P jest generowana jawnym algorytmem Fishera-Yatesa sterowanym seedem z klucza, a odwracanie działa przez P^-1."  # Wyjaśnienie formalnej odwracalności.
     )  # Koniec zwracanego opisu.

@@ -8,6 +8,8 @@ import cv2  # OpenCV do konwersji obrazu na skalę szarości.
 import numpy as np  # NumPy do obliczeń numerycznych.
 
 from stage2 import scramble_image  # Import funkcji scramblingu Etapu 2.
+from stage2 import permutation_mapping  # Import funkcji zwracającej formalne odwzorowania P i P^-1.
+from stage2 import verify_inverse_relation  # Import funkcji przygotowującej przykłady P^-1(P(i)) = i.
 from stage2 import unscramble_image  # Import funkcji unscramblingu Etapu 2.
 
 
@@ -57,6 +59,30 @@ def _format_metric(value: float) -> str:  # Formatowanie liczb do czytelnej post
     return f"{value:.6f}"  # Zwrócenie liczby z sześcioma miejscami po przecinku.
 
 
+# ---- Funkcje pomocnicze: formalny opis permutacji ----
+def _formal_permutation_lines(pixel_count: int, key_text: str) -> list[str]:  # Budowa linii raportu formalnie opisujących P oraz P^-1.
+    permutation: np.ndarray
+    inverse: np.ndarray
+    permutation, inverse = permutation_mapping(pixel_count, key_text)  # Pobranie permutacji P i permutacji odwrotnej P^-1.
+    verification_rows: list[tuple[int, int, int]] = verify_inverse_relation(pixel_count, key_text)  # Pobranie przykładowych weryfikacji relacji odwrotności.
+    report_lines: list[str] = [  # Lista linii formalnego opisu permutacji.
+        "Formalny opis permutacji:",  # Nagłówek sekcji formalnej.
+        f"- Domena i przeciwdziedzina: P: {{0...{pixel_count - 1}}} -> {{0...{pixel_count - 1}}}",  # Formalny zapis funkcji P.
+        "- P(i) oznacza indeks wyjściowy przypisany i-temu pikselowi po spłaszczeniu obrazu.",  # Wyjaśnienie znaczenia funkcji P.
+        "- P^-1(j) oznacza indeks wejściowy odzyskany z pozycji j po zastosowaniu permutacji odwrotnej.",  # Wyjaśnienie znaczenia funkcji P^-1.
+        f"- P jest generowana jawnym algorytmem Fishera-Yatesa sterowanym seedem z klucza.",  # Informacja o sposobie generowania P.
+        f"- Liczba wszystkich indeksów N: {pixel_count}",  # Rozmiar dziedziny permutacji.
+        f"- Przykład pierwszych wartości P(i): {permutation[:min(8, pixel_count)].tolist()}",  # Kilka pierwszych wartości permutacji.
+        f"- Przykład pierwszych wartości P^-1(i): {inverse[:min(8, pixel_count)].tolist()}",  # Kilka pierwszych wartości permutacji odwrotnej.
+        "- Weryfikacja relacji P^-1(P(i)) = i dla wybranych indeksów:",  # Nagłówek sekcji weryfikacyjnej.
+    ]  # Koniec podstawowych linii formalnego opisu.
+    for source_index, mapped_index, restored_index in verification_rows:  # Iteracja po wybranych przykładach indeksów.
+        report_lines.append(  # Dopisanie pojedynczego przykładu formalnej weryfikacji.
+            f"  - i = {source_index}, P(i) = {mapped_index}, P^-1(P(i)) = {restored_index}"  # Konkretna trójka pokazująca odwracalność.
+        )  # Koniec dopisania pojedynczego przykładu.
+    return report_lines  # Zwrócenie pełnej listy linii formalnego opisu.
+
+
 # ---- Raport: scrambling ----
 def build_scramble_analysis_text(
     original_image: np.ndarray,
@@ -65,6 +91,7 @@ def build_scramble_analysis_text(
     wrong_key_text: str,
     used_key_label: str,
 ) -> str:  # Budowa tekstu analizy po wykonaniu scramblingu.
+    pixel_count: int = original_image.shape[0] * original_image.shape[1]  # Liczba pikseli po spłaszczeniu obrazu.
     original_correlation: dict[str, float] = adjacent_pixel_correlation(original_image)  # Korelacja sąsiednich pikseli przed scramblingiem.
     scrambled_correlation: dict[str, float] = adjacent_pixel_correlation(scrambled_image)  # Korelacja sąsiednich pikseli po scramblingu.
     report_lines: list[str] = [  # Lista linii raportu końcowego.
@@ -83,6 +110,8 @@ def build_scramble_analysis_text(
         f"- Po scramblingu, pozioma: {_format_metric(scrambled_correlation['horizontal'])}",  # Korelacja pozioma po scramblingu.
         f"- Po scramblingu, pionowa: {_format_metric(scrambled_correlation['vertical'])}",  # Korelacja pionowa po scramblingu.
     ]  # Koniec podstawowych linii raportu.
+
+    report_lines.extend(["", *_formal_permutation_lines(pixel_count, correct_key_text)])  # Dopisanie formalnego opisu P oraz P^-1.
 
     if correct_key_text.strip() and wrong_key_text.strip():  # Sprawdzenie, czy użytkownik podał oba klucze do porównania.
         scrambled_with_wrong_key: np.ndarray = scramble_image(original_image, wrong_key_text)  # Scrambling tego samego obrazu z błędnym kluczem.
@@ -127,6 +156,7 @@ def build_unscramble_analysis_text(
     wrong_key_text: str,
     used_key_label: str,
 ) -> str:  # Budowa tekstu analizy po wykonaniu unscramblingu.
+    pixel_count: int = scrambled_image.shape[0] * scrambled_image.shape[1]  # Liczba pikseli po spłaszczeniu obrazu.
     report_lines: list[str] = [  # Lista linii raportu końcowego.
         "Wykonano unscrambling dla Etapu 2.",  # Nagłówek raportu.
         f"Użyty klucz operacyjny: {used_key_label}.",  # Informacja o kluczu użytym w bieżącej operacji.
@@ -135,6 +165,9 @@ def build_unscramble_analysis_text(
         "- Dla poprawnego klucza obraz jest odtwarzany przez zastosowanie permutacji odwrotnej do tej użytej w scramblingu.",  # Wniosek dla poprawnego klucza.
         "- Dla błędnego klucza używana jest inna permutacja odwrotna, więc piksele trafiają na niewłaściwe pozycje.",  # Wniosek dla błędnego klucza.
     ]  # Koniec podstawowych linii raportu.
+
+    if correct_key_text.strip():  # Sprawdzenie, czy dostępny jest poprawny klucz do formalnego opisu permutacji.
+        report_lines.extend(["", *_formal_permutation_lines(pixel_count, correct_key_text)])  # Dopisanie formalnego opisu P oraz P^-1.
 
     if original_image is not None:  # Sprawdzenie, czy dostępny jest obraz referencyjny do porównania.
         restored_difference: dict[str, float] = image_difference_metrics(original_image, restored_image)  # Różnica między oryginałem a obrazem odtworzonym.
