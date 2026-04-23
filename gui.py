@@ -17,9 +17,12 @@ from PyQt6.QtWidgets import QCheckBox  # Import checkbox widget.
 from PyQt6.QtWidgets import QFrame  # Import frame widget for bordered areas.
 from PyQt6.QtWidgets import QGroupBox  # Import group box widget for logical sections.
 from PyQt6.QtWidgets import QHBoxLayout  # Import horizontal layout manager.
+from PyQt6.QtWidgets import QFileDialog  # Import file-save dialog widget.
+from PyQt6.QtWidgets import QInputDialog  # Import simple selection dialog widget.
 from PyQt6.QtWidgets import QLabel  # Import label widget.
 from PyQt6.QtWidgets import QLineEdit  # Import single-line text input widget.
 from PyQt6.QtWidgets import QMainWindow  # Import the main window base class.
+from PyQt6.QtWidgets import QMessageBox  # Import message boxes for user feedback.
 from PyQt6.QtWidgets import QPushButton  # Import push button widget.
 from PyQt6.QtWidgets import QPlainTextEdit  # Import plain text area widget.
 from PyQt6.QtWidgets import QRadioButton  # Import radio button widget.
@@ -97,6 +100,7 @@ class ProjectGui(QMainWindow):  # Define the main application window.
         self.setWindowTitle("M-II Projekt - GUI Skeleton")  # Set the main window title.
         self.resize(1350, 850)  # Set a comfortable default window size.
         self._build_ui()  # Build the whole user interface.
+        self._connect_signals()  # Connect button actions to their handlers.
 
     def _build_ui(self) -> None:  # Create and arrange all interface sections.
         central_widget: QWidget = QWidget()  # Create the central widget used by QMainWindow.
@@ -229,6 +233,60 @@ class ProjectGui(QMainWindow):  # Define the main application window.
             "Na tym etapie to tylko szkielet interfejsu."
         )  # Finish setting the placeholder text.
         metrics_layout.addWidget(self.metrics_box)  # Add the metrics text area to the metrics section.
+
+    def _connect_signals(self) -> None:  # Connect widget signals to their action handlers.
+        self.save_button.clicked.connect(self._save_selected_image)  # Handle saving one of the available images.
+
+    def _save_selected_image(self) -> None:  # Let the user choose which image should be saved.
+        image_options: list[tuple[str, np.ndarray | None]] = [  # Define saveable image choices.
+            ("Obraz oryginalny", self.original_image),
+            ("Obraz przekształcony", self.scrambled_image),
+            ("Obraz odtworzony", self.restored_image),
+        ]
+        option_labels: list[str] = [label for label, _ in image_options]  # Extract labels for the selection dialog.
+        selected_label, accepted = QInputDialog.getItem(  # Ask the user which image should be saved.
+            self,
+            "Zapisz obraz",
+            "Wybierz obraz do zapisania:",
+            option_labels,
+            0,
+            False,
+        )
+        if not accepted:  # Stop if the user canceled the image-type selection.
+            return
+
+        selected_image: np.ndarray | None = next(  # Find the image that matches the chosen label.
+            image for label, image in image_options if label == selected_label
+        )
+        if selected_image is None:  # Warn when the chosen image is not available yet.
+            QMessageBox.warning(
+                self,
+                "Brak obrazu",
+                f"{selected_label} nie jest jeszcze dostępny do zapisania.",
+            )
+            return
+
+        default_filename: str = self._default_save_filename(selected_label)  # Suggest a filename matching the selected image type.
+        file_path, _ = QFileDialog.getSaveFileName(  # Let the user choose the target path and format.
+            self,
+            "Zapisz obraz",
+            str(self.base_dir / default_filename),
+            "Pliki obrazów (*.png *.jpg *.jpeg *.bmp);;Wszystkie pliki (*)",
+        )
+        if not file_path:  # Stop if the user canceled the save dialog.
+            return
+        if cv2.imwrite(file_path, selected_image):  # Save the chosen image with OpenCV.
+            QMessageBox.information(self, "Zapis zakończony", f"Zapisano plik:\n{file_path}")
+            return
+        QMessageBox.critical(self, "Błąd zapisu", f"Nie udało się zapisać pliku:\n{file_path}")
+
+    def _default_save_filename(self, selected_label: str) -> str:  # Build a simple suggested filename for the chosen image type.
+        filename_map: dict[str, str] = {
+            "Obraz oryginalny": "obraz_oryginalny.png",
+            "Obraz przekształcony": "obraz_przeksztalcony.png",
+            "Obraz odtworzony": "obraz_odtworzony.png",
+        }
+        return filename_map.get(selected_label, "obraz.png")
 
     def _load_logo_into_label(self, target_label: QLabel) -> None:  # Load the university logo into a label.
         if not self.logo_path.exists():  # Check whether the logo file exists.
