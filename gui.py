@@ -20,6 +20,8 @@ from stage2 import unscramble_image as stage2_unscramble  # Import Stage 2 unscr
 from stage3 import scramble_image as stage3_scramble  # Import Stage 3 scrambling algorithm.
 from stage3 import stage3_description  # Import Stage 3 description for the metrics panel.
 from stage3 import unscramble_image as stage3_unscramble  # Import Stage 3 unscrambling algorithm.
+from stage3_analysis import build_scramble_analysis_text as build_stage3_scramble_analysis_text  # Import raportu analizy po scramblingu Etapu 3.
+from stage3_analysis import build_unscramble_analysis_text as build_stage3_unscramble_analysis_text  # Import raportu analizy po unscramblingu Etapu 3.
 from stage2_analysis import build_scramble_analysis_text as build_stage2_scramble_analysis_text  # Import raportu analizy po scramblingu Etapu 2.
 from stage2_analysis import build_unscramble_analysis_text as build_stage2_unscramble_analysis_text  # Import raportu analizy po unscramblingu Etapu 2.
 from stage1_analysis import build_scramble_analysis_text  # Import raportu analizy po scramblingu Etapu 1.
@@ -357,12 +359,15 @@ class ProjectGui(QMainWindow):  # Define the main application window.
             return  # Zakończenie funkcji po ustawieniu raportu Etapu 1.
 
         if selected_stage == 3:  # Sprawdzenie, czy aktywny jest Etap 3.
-            self.metrics_box.setPlainText(  # Ustawienie tymczasowego raportu informacyjnego dla Etapu 3 po scramblingu.
-                "Wykonano scrambling dla Etapu 3.\n"
-                "Etap 3 działa jako hybryda: najpierw permutacja pikseli, potem substytucja wartości pikseli modulo 256.\n"
-                "W tej iteracji zaimplementowano algorytm i podłączenie do GUI.\n"
-                "Analiza eksperymentalna i metryki Etapu 3 zostaną dodane w drugiej iteracji."
-            )  # Koniec ustawiania raportu informacyjnego Etapu 3.
+            self.metrics_box.setPlainText(  # Ustawienie raportu analitycznego dla Etapu 3 po scramblingu.
+                build_stage3_scramble_analysis_text(  # Budowa raportu eksperymentalnego dla scramblingu Etapu 3.
+                    self.original_image,  # Obraz oryginalny jako punkt odniesienia.
+                    self.scrambled_image,  # Obraz po scramblingu.
+                    self.correct_key_input.text(),  # Tekst klucza poprawnego.
+                    self.wrong_key_input.text(),  # Tekst klucza błędnego.
+                    self._active_key_label(),  # Informacja, który klucz był użyty operacyjnie.
+                )  # Koniec budowy raportu.
+            )  # Koniec ustawiania raportu Etapu 3.
             return  # Zakończenie funkcji po ustawieniu raportu Etapu 3.
 
         self.metrics_box.setPlainText(  # Ustawienie raportu analitycznego dla Etapu 2 po scramblingu.
@@ -412,12 +417,16 @@ class ProjectGui(QMainWindow):  # Define the main application window.
             return  # Zakończenie funkcji po ustawieniu raportu Etapu 1.
 
         if selected_stage == 3:  # Sprawdzenie, czy aktywny jest Etap 3.
-            self.metrics_box.setPlainText(  # Ustawienie tymczasowego raportu informacyjnego dla Etapu 3 po unscramblingu.
-                "Wykonano unscrambling dla Etapu 3.\n"
-                "Algorytm odwrotny działa w kolejności odwrotnej do scramblingu: najpierw cofana jest substytucja, a potem permutacja odwrotna.\n"
-                "W tej iteracji zaimplementowano pełną odwracalność Etapu 3 i podłączenie do GUI.\n"
-                "Szczegółowa analiza i obowiązkowe metryki zostaną dodane w drugiej iteracji."
-            )  # Koniec ustawiania raportu informacyjnego Etapu 3.
+            self.metrics_box.setPlainText(  # Ustawienie raportu analitycznego dla Etapu 3 po unscramblingu.
+                build_stage3_unscramble_analysis_text(  # Budowa raportu eksperymentalnego dla unscramblingu Etapu 3.
+                    self.original_image,  # Obraz oryginalny do porównania.
+                    self.scrambled_image,  # Obraz wejściowy po scramblingu.
+                    self.restored_image,  # Obraz odtworzony.
+                    self.correct_key_input.text(),  # Tekst klucza poprawnego.
+                    self.wrong_key_input.text(),  # Tekst klucza błędnego.
+                    self._active_key_label(),  # Informacja, który klucz był użyty operacyjnie.
+                )  # Koniec budowy raportu.
+            )  # Koniec ustawiania raportu Etapu 3.
             return  # Zakończenie funkcji po ustawieniu raportu Etapu 3.
 
         self.metrics_box.setPlainText(  # Ustawienie raportu analitycznego dla Etapu 2 po unscramblingu.
