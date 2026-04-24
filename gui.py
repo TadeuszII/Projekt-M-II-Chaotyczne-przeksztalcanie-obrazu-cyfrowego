@@ -17,6 +17,9 @@ from stage1_analysis import build_unscramble_analysis_text  # Import Stage 1 exp
 from stage2 import scramble_image as stage2_scramble  # Import Stage 2 scrambling algorithm.
 from stage2 import stage2_description  # Import Stage 2 description for the metrics panel.
 from stage2 import unscramble_image as stage2_unscramble  # Import Stage 2 unscrambling algorithm.
+from stage3 import scramble_image as stage3_scramble  # Import Stage 3 scrambling algorithm.
+from stage3 import stage3_description  # Import Stage 3 description for the metrics panel.
+from stage3 import unscramble_image as stage3_unscramble  # Import Stage 3 unscrambling algorithm.
 from stage2_analysis import build_scramble_analysis_text as build_stage2_scramble_analysis_text  # Import raportu analizy po scramblingu Etapu 2.
 from stage2_analysis import build_unscramble_analysis_text as build_stage2_unscramble_analysis_text  # Import raportu analizy po unscramblingu Etapu 2.
 from stage1_analysis import build_scramble_analysis_text  # Import raportu analizy po scramblingu Etapu 1.
@@ -321,17 +324,19 @@ class ProjectGui(QMainWindow):  # Define the main application window.
             QMessageBox.warning(self, "Brak obrazu", "Najpierw wczytaj obraz wejściowy.")  # Komunikat o braku obrazu wejściowego.
             return  # Zakończenie funkcji bez scramblingu.
 
-        if self._selected_stage() != 1:  # Sprawdzenie, czy użytkownik wybrał Etap 1.
-            if self._selected_stage() != 2:  # Sprawdzenie, czy użytkownik wybrał Etap 2.
-                QMessageBox.information(self, "Etap niedostępny", "Obecnie zaimplementowane są Etap 1 i Etap 2.")  # Informacja o braku innych etapów.
-                return  # Zakończenie funkcji dla nieobsługiwanego etapu.
+        selected_stage: int = self._selected_stage()  # Pobranie numeru aktualnie wybranego etapu.
+        if selected_stage not in (1, 2, 3):  # Sprawdzenie, czy użytkownik wybrał obsługiwany etap.
+            QMessageBox.information(self, "Etap niedostępny", "Obecnie zaimplementowane są Etap 1, Etap 2 i Etap 3.")  # Informacja o braku innych etapów.
+            return  # Zakończenie funkcji dla nieobsługiwanego etapu.
 
         try:  # Rozpoczęcie sekcji obsługi potencjalnego błędu klucza.
             key_text: str = self._active_key_text()  # Pobranie aktywnego klucza z GUI.
-            if self._selected_stage() == 1:  # Sprawdzenie, czy aktywny jest Etap 1.
+            if selected_stage == 1:  # Sprawdzenie, czy aktywny jest Etap 1.
                 self.scrambled_image = stage1_scramble(self.original_image, key_text)  # Wykonanie scramblingu Etapu 1.
-            else:  # Obsługa Etapu 2.
+            elif selected_stage == 2:  # Obsługa Etapu 2.
                 self.scrambled_image = stage2_scramble(self.original_image, key_text)  # Wykonanie scramblingu Etapu 2.
+            else:  # Obsługa Etapu 3.
+                self.scrambled_image = stage3_scramble(self.original_image, key_text)  # Wykonanie scramblingu Etapu 3.
         except ValueError as error:  # Obsługa błędnego lub pustego klucza.
             QMessageBox.warning(self, "Błędny klucz", str(error))  # Wyświetlenie komunikatu o błędzie klucza.
             return  # Zakończenie funkcji po błędzie.
@@ -339,7 +344,7 @@ class ProjectGui(QMainWindow):  # Define the main application window.
         self.scrambled_preview.set_numpy_image(self.scrambled_image)  # Aktualizacja podglądu obrazu przekształconego.
         self.restored_image = None  # Wyczyszczenie starego obrazu odtworzonego.
         self.restored_preview.set_placeholder("Brak obrazu odtworzonego")  # Wyzerowanie podglądu obrazu odtworzonego.
-        if self._selected_stage() == 1:  # Sprawdzenie, czy aktywny jest Etap 1.
+        if selected_stage == 1:  # Sprawdzenie, czy aktywny jest Etap 1.
             self.metrics_box.setPlainText(  # Ustawienie raportu analitycznego dla Etapu 1 po scramblingu.
                 build_scramble_analysis_text(
                     self.original_image,
@@ -350,6 +355,15 @@ class ProjectGui(QMainWindow):  # Define the main application window.
                 )
             )  # Koniec ustawiania raportu Etapu 1.
             return  # Zakończenie funkcji po ustawieniu raportu Etapu 1.
+
+        if selected_stage == 3:  # Sprawdzenie, czy aktywny jest Etap 3.
+            self.metrics_box.setPlainText(  # Ustawienie tymczasowego raportu informacyjnego dla Etapu 3 po scramblingu.
+                "Wykonano scrambling dla Etapu 3.\n"
+                "Etap 3 działa jako hybryda: najpierw permutacja pikseli, potem substytucja wartości pikseli modulo 256.\n"
+                "W tej iteracji zaimplementowano algorytm i podłączenie do GUI.\n"
+                "Analiza eksperymentalna i metryki Etapu 3 zostaną dodane w drugiej iteracji."
+            )  # Koniec ustawiania raportu informacyjnego Etapu 3.
+            return  # Zakończenie funkcji po ustawieniu raportu Etapu 3.
 
         self.metrics_box.setPlainText(  # Ustawienie raportu analitycznego dla Etapu 2 po scramblingu.
             build_stage2_scramble_analysis_text(  # Budowa raportu eksperymentalnego dla scramblingu Etapu 2.
@@ -366,23 +380,25 @@ class ProjectGui(QMainWindow):  # Define the main application window.
             QMessageBox.warning(self, "Brak obrazu", "Najpierw wykonaj scrambling obrazu albo wczytaj obraz przekształcony.")  # Komunikat o braku obrazu wejściowego do unscramblingu.
             return  # Zakończenie funkcji bez odtwarzania.
 
-        if self._selected_stage() != 1:  # Sprawdzenie, czy użytkownik wybrał Etap 1.
-            if self._selected_stage() != 2:  # Sprawdzenie, czy użytkownik wybrał Etap 2.
-                QMessageBox.information(self, "Etap niedostępny", "Obecnie zaimplementowane są Etap 1 i Etap 2.")  # Informacja o braku innych etapów.
-                return  # Zakończenie funkcji dla nieobsługiwanego etapu.
+        selected_stage: int = self._selected_stage()  # Pobranie numeru aktualnie wybranego etapu.
+        if selected_stage not in (1, 2, 3):  # Sprawdzenie, czy użytkownik wybrał obsługiwany etap.
+            QMessageBox.information(self, "Etap niedostępny", "Obecnie zaimplementowane są Etap 1, Etap 2 i Etap 3.")  # Informacja o braku innych etapów.
+            return  # Zakończenie funkcji dla nieobsługiwanego etapu.
 
         try:  # Rozpoczęcie sekcji obsługi potencjalnego błędu klucza.
-            key_text = self._active_key_text()  # Pobranie aktywnego klucza z GUI.
-            if self._selected_stage() == 1:  # Sprawdzenie, czy aktywny jest Etap 1.
+            key_text: str = self._active_key_text()  # Pobranie aktywnego klucza z GUI.
+            if selected_stage == 1:  # Sprawdzenie, czy aktywny jest Etap 1.
                 self.restored_image = stage1_unscramble(self.scrambled_image, key_text)  # Wykonanie odwrotnej transformacji Etapu 1.
-            else:  # Obsługa Etapu 2.
+            elif selected_stage == 2:  # Obsługa Etapu 2.
                 self.restored_image = stage2_unscramble(self.scrambled_image, key_text)  # Wykonanie odwrotnej transformacji Etapu 2.
+            else:  # Obsługa Etapu 3.
+                self.restored_image = stage3_unscramble(self.scrambled_image, key_text)  # Wykonanie odwrotnej transformacji Etapu 3.
         except ValueError as error:  # Obsługa błędnego lub pustego klucza.
             QMessageBox.warning(self, "Błędny klucz", str(error))  # Wyświetlenie komunikatu o błędzie klucza.
             return  # Zakończenie funkcji po błędzie.
 
         self.restored_preview.set_numpy_image(self.restored_image)  # Aktualizacja podglądu obrazu odtworzonego.
-        if self._selected_stage() == 1:  # Sprawdzenie, czy aktywny jest Etap 1.
+        if selected_stage == 1:  # Sprawdzenie, czy aktywny jest Etap 1.
             self.metrics_box.setPlainText(  # Ustawienie raportu analitycznego dla Etapu 1 po unscramblingu.
                 build_unscramble_analysis_text(
                     self.original_image,
@@ -394,6 +410,15 @@ class ProjectGui(QMainWindow):  # Define the main application window.
                 )
             )  # Koniec ustawiania raportu Etapu 1.
             return  # Zakończenie funkcji po ustawieniu raportu Etapu 1.
+
+        if selected_stage == 3:  # Sprawdzenie, czy aktywny jest Etap 3.
+            self.metrics_box.setPlainText(  # Ustawienie tymczasowego raportu informacyjnego dla Etapu 3 po unscramblingu.
+                "Wykonano unscrambling dla Etapu 3.\n"
+                "Algorytm odwrotny działa w kolejności odwrotnej do scramblingu: najpierw cofana jest substytucja, a potem permutacja odwrotna.\n"
+                "W tej iteracji zaimplementowano pełną odwracalność Etapu 3 i podłączenie do GUI.\n"
+                "Szczegółowa analiza i obowiązkowe metryki zostaną dodane w drugiej iteracji."
+            )  # Koniec ustawiania raportu informacyjnego Etapu 3.
+            return  # Zakończenie funkcji po ustawieniu raportu Etapu 3.
 
         self.metrics_box.setPlainText(  # Ustawienie raportu analitycznego dla Etapu 2 po unscramblingu.
             build_stage2_unscramble_analysis_text(  # Budowa raportu eksperymentalnego dla unscramblingu Etapu 2.
@@ -407,25 +432,25 @@ class ProjectGui(QMainWindow):  # Define the main application window.
         )  # Koniec ustawiania raportu Etapu 2.
 
     def _selected_stage(self) -> int:  # Return the selected stage number.
-        checked_button = self.stage_button_group.checkedButton()
-        if checked_button is None:
-            return 1
-        return self.stage_button_group.id(checked_button)
+        checked_button: QRadioButton | None = self.stage_button_group.checkedButton()  # Pobranie aktualnie zaznaczonego przycisku etapu.
+        if checked_button is None:  # Sprawdzenie, czy jakikolwiek etap jest zaznaczony.
+            return 1  # Domyślny wybór Etapu 1 przy braku zaznaczenia.
+        return self.stage_button_group.id(checked_button)  # Zwrócenie identyfikatora wybranego etapu.
 
     def _active_key_text(self) -> str:  # Return the currently active key text based on the checkbox state.
-        if self.use_wrong_key_checkbox.isChecked():
-            return self.wrong_key_input.text()
-        return self.correct_key_input.text()
+        if self.use_wrong_key_checkbox.isChecked():  # Sprawdzenie, czy użytkownik chce użyć błędnego klucza.
+            return self.wrong_key_input.text()  # Zwrócenie tekstu błędnego klucza.
+        return self.correct_key_input.text()  # Zwrócenie tekstu poprawnego klucza.
 
     def _active_key_label(self) -> str:  # Return a human-readable label for the key currently in use.
-        return "klucz błędny" if self.use_wrong_key_checkbox.isChecked() else "klucz poprawny"
+        return "klucz błędny" if self.use_wrong_key_checkbox.isChecked() else "klucz poprawny"  # Zwrócenie etykiety aktywnego klucza.
 
     def _current_stage_description(self) -> str:  # Zwrócenie opisu aktualnie wybranego etapu.
         if self._selected_stage() == 1:  # Sprawdzenie, czy aktywny jest Etap 1.
             return stage1_description()  # Zwrócenie opisu Etapu 1.
         if self._selected_stage() == 2:  # Sprawdzenie, czy aktywny jest Etap 2.
             return stage2_description()  # Zwrócenie opisu Etapu 2.
-        return "Etap 3 nie jest jeszcze zaimplementowany."  # Informacja o braku implementacji Etapu 3.
+        return stage3_description()  # Zwrócenie opisu Etapu 3.
 
     def _save_selected_image(self) -> None:  # Let the user choose which image should be saved.
         image_options: list[tuple[str, np.ndarray | None]] = [  # Define saveable image choices.
