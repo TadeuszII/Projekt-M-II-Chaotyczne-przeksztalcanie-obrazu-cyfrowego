@@ -4,6 +4,8 @@
 # ---- Importy ----
 from __future__ import annotations  # Allow postponed evaluation of type hints.
 
+import csv  # Import csv for exporting metrics in table form.
+import json  # Import json for exporting metrics in structured form.
 import sys  # Import sys to access command-line arguments and app exit handling.
 from pathlib import Path  # Import Path for safe filesystem paths.
 
@@ -202,6 +204,9 @@ class ProjectGui(QMainWindow):  # Define the main application window.
         self.unscramble_button: QPushButton = QPushButton("Unscramble")  # Create the future unscramble button.
         controls_layout.addWidget(self.unscramble_button)  # Add the unscramble button.
 
+        self.reset_button: QPushButton = QPushButton("Reset")  # Create the reset button clearing the current experiment state.
+        controls_layout.addWidget(self.reset_button)  # Add the reset button to the control panel.
+
         self.save_button: QPushButton = QPushButton("Zapisz wynik")  # Create the future save-results button.
         controls_layout.addWidget(self.save_button)  # Add the save-results button.
         controls_layout.addStretch(1)  # Push the controls upward and leave free space below.
@@ -248,16 +253,14 @@ class ProjectGui(QMainWindow):  # Define the main application window.
 
         self.metrics_box: QPlainTextEdit = QPlainTextEdit()  # Create the metrics text area.
         self.metrics_box.setReadOnly(True)  # Make the metrics area read-only for now.
-        self.metrics_box.setPlainText(  # Insert placeholder text describing future use.
-            "Tutaj pojawią się przyszłe metryki, komentarze i wyniki eksperymentów.\n"
-            "Na tym etapie to tylko szkielet interfejsu."
-        )  # Finish setting the placeholder text.
+        self.metrics_box.setPlainText(self._default_metrics_text())  # Insert the default placeholder text for the analysis area.
         metrics_layout.addWidget(self.metrics_box)  # Add the metrics text area to the metrics section.
 
     def _connect_signals(self) -> None:  # Connect widget signals to their action handlers.
         self.load_button.clicked.connect(self._load_image)  # Load an image from disk.
         self.scramble_button.clicked.connect(self._run_scramble)  # Run the selected scrambling stage.
         self.unscramble_button.clicked.connect(self._run_unscramble)  # Run the selected unscrambling stage.
+        self.reset_button.clicked.connect(self._reset_interface)  # Reset the experiment state in the GUI.
         self.save_button.clicked.connect(self._save_selected_image)  # Handle saving one of the available images.
 
     # ---- Wczytywanie obrazów ----
@@ -461,48 +464,182 @@ class ProjectGui(QMainWindow):  # Define the main application window.
             return stage2_description()  # Zwrócenie opisu Etapu 2.
         return stage3_description()  # Zwrócenie opisu Etapu 3.
 
-    def _save_selected_image(self) -> None:  # Let the user choose which image should be saved.
+    def _default_metrics_text(self) -> str:  # Zwrócenie domyślnego tekstu dla pola metryk i analizy.
+        return (  # Zwrócenie gotowego tekstu zastępczego.
+            "Tutaj pojawią się metryki, komentarze i wyniki eksperymentów.\n"  # Pierwsza linia tekstu zastępczego.
+            "Wczytaj obraz i uruchom wybrany etap, aby zobaczyć analizę."
+        )  # Koniec zwracanego tekstu.
+
+    def _reset_interface(self) -> None:  # Wyczyszczenie aktualnego stanu eksperymentu w GUI.
+        self.original_image = None  # Wyzerowanie obrazu oryginalnego.
+        self.scrambled_image = None  # Wyzerowanie obrazu przekształconego.
+        self.restored_image = None  # Wyzerowanie obrazu odtworzonego.
+        self.original_preview.set_placeholder("Brak obrazu oryginalnego")  # Przywrócenie pustego stanu podglądu obrazu oryginalnego.
+        self.scrambled_preview.set_placeholder("Brak obrazu przekształconego")  # Przywrócenie pustego stanu podglądu obrazu przekształconego.
+        self.restored_preview.set_placeholder("Brak obrazu odtworzonego")  # Przywrócenie pustego stanu podglądu obrazu odtworzonego.
+        self.correct_key_input.clear()  # Wyczyszczenie pola poprawnego klucza.
+        self.wrong_key_input.clear()  # Wyczyszczenie pola błędnego klucza.
+        self.use_wrong_key_checkbox.setChecked(False)  # Wyłączenie użycia błędnego klucza.
+        self.metrics_box.setPlainText(self._default_metrics_text())  # Przywrócenie domyślnego tekstu pola analizy.
+
+    def _save_selected_image(self) -> None:  # Zapis wyniku po wyborze typu danych do zapisania.
+        save_options: list[str] = ["Obraz", "Metryki"]  # Lista dostępnych typów danych do zapisania.
+        selected_option, accepted = QInputDialog.getItem(  # Zapytanie użytkownika, co chce zapisać.
+            self,  # Rodzic okna dialogowego.
+            "Zapisz wynik",  # Tytuł okna dialogowego.
+            "Co chcesz zapisać:",  # Treść pytania dla użytkownika.
+            save_options,  # Dostępne opcje wyboru.
+            0,  # Domyślnie zaznaczona pierwsza opcja.
+            False,  # Brak możliwości wpisania własnej wartości.
+        )  # Koniec wywołania okna wyboru.
+        if not accepted:  # Sprawdzenie, czy użytkownik zatwierdził wybór.
+            return  # Zakończenie funkcji po anulowaniu.
+        if selected_option == "Obraz":  # Sprawdzenie, czy użytkownik chce zapisać obraz.
+            self._save_image_result()  # Uruchomienie zapisu obrazu.
+            return  # Zakończenie funkcji po obsłudze zapisu obrazu.
+        self._save_metrics_result()  # Uruchomienie zapisu metryk.
+
+    def _save_image_result(self) -> None:  # Zapis wybranego obrazu do pliku.
         image_options: list[tuple[str, np.ndarray | None]] = [  # Define saveable image choices.
-            ("Obraz oryginalny", self.original_image),
-            ("Obraz przekształcony", self.scrambled_image),
-            ("Obraz odtworzony", self.restored_image),
-        ]
+            ("Obraz oryginalny", self.original_image),  # Opcja zapisu obrazu oryginalnego.
+            ("Obraz przekształcony", self.scrambled_image),  # Opcja zapisu obrazu po scramblingu.
+            ("Obraz odtworzony", self.restored_image),  # Opcja zapisu obrazu po unscramblingu.
+        ]  # Koniec listy opcji.
         option_labels: list[str] = [label for label, _ in image_options]  # Extract labels for the selection dialog.
         selected_label, accepted = QInputDialog.getItem(  # Ask the user which image should be saved.
-            self,
-            "Zapisz obraz",
-            "Wybierz obraz do zapisania:",
-            option_labels,
-            0,
-            False,
-        )
+            self,  # Rodzic okna dialogowego.
+            "Zapisz obraz",  # Tytuł okna dialogowego.
+            "Wybierz obraz do zapisania:",  # Treść pytania dla użytkownika.
+            option_labels,  # Dostępne opcje wyboru.
+            0,  # Domyślnie zaznaczona pierwsza opcja.
+            False,  # Brak możliwości wpisania własnej wartości.
+        )  # Koniec wywołania okna wyboru.
         if not accepted:  # Stop if the user canceled the image-type selection.
-            return
+            return  # Zakończenie funkcji po anulowaniu.
 
         selected_image: np.ndarray | None = next(  # Find the image that matches the chosen label.
-            image for label, image in image_options if label == selected_label
-        )
+            image for label, image in image_options if label == selected_label  # Wyszukanie obrazu odpowiadającego wybranej etykiecie.
+        )  # Koniec wyszukiwania obrazu.
         if selected_image is None:  # Warn when the chosen image is not available yet.
-            QMessageBox.warning(
-                self,
-                "Brak obrazu",
-                f"{selected_label} nie jest jeszcze dostępny do zapisania.",
-            )
-            return
+            QMessageBox.warning(  # Wyświetlenie ostrzeżenia o braku wybranego obrazu.
+                self,  # Rodzic okna komunikatu.
+                "Brak obrazu",  # Tytuł ostrzeżenia.
+                f"{selected_label} nie jest jeszcze dostępny do zapisania.",  # Treść ostrzeżenia.
+            )  # Koniec wyświetlania ostrzeżenia.
+            return  # Zakończenie funkcji po błędzie.
 
         default_filename: str = self._default_save_filename(selected_label)  # Suggest a filename matching the selected image type.
         file_path, _ = QFileDialog.getSaveFileName(  # Let the user choose the target path and format.
-            self,
-            "Zapisz obraz",
-            str(self.base_dir / default_filename),
-            "Pliki obrazów (*.png *.jpg *.jpeg *.bmp);;Wszystkie pliki (*)",
-        )
+            self,  # Rodzic okna dialogowego.
+            "Zapisz obraz",  # Tytuł okna zapisu.
+            str(self.base_dir / default_filename),  # Domyślna ścieżka docelowa.
+            "Pliki obrazów (*.png *.jpg *.jpeg *.bmp);;Wszystkie pliki (*)",  # Obsługiwane formaty zapisu obrazu.
+        )  # Koniec wywołania okna zapisu.
         if not file_path:  # Stop if the user canceled the save dialog.
-            return
+            return  # Zakończenie funkcji po anulowaniu.
         if cv2.imwrite(file_path, selected_image):  # Save the chosen image with OpenCV.
-            QMessageBox.information(self, "Zapis zakończony", f"Zapisano plik:\n{file_path}")
-            return
-        QMessageBox.critical(self, "Błąd zapisu", f"Nie udało się zapisać pliku:\n{file_path}")
+            QMessageBox.information(self, "Zapis zakończony", f"Zapisano plik:\n{file_path}")  # Potwierdzenie poprawnego zapisu pliku obrazu.
+            return  # Zakończenie funkcji po poprawnym zapisie.
+        QMessageBox.critical(self, "Błąd zapisu", f"Nie udało się zapisać pliku:\n{file_path}")  # Komunikat o błędzie zapisu obrazu.
+
+    def _save_metrics_result(self) -> None:  # Zapis metryk i analizy do pliku JSON lub CSV.
+        metrics_text: str = self.metrics_box.toPlainText().strip()  # Pobranie aktualnego tekstu metryk z pola analizy.
+        if not metrics_text:  # Sprawdzenie, czy istnieje tekst do zapisania.
+            QMessageBox.warning(self, "Brak metryk", "Nie ma metryk ani analizy do zapisania.")  # Ostrzeżenie o braku danych do zapisu.
+            return  # Zakończenie funkcji po błędzie.
+
+        format_options: list[str] = ["JSON", "CSV"]  # Lista dostępnych formatów zapisu metryk.
+        selected_format, accepted = QInputDialog.getItem(  # Zapytanie użytkownika o format zapisu metryk.
+            self,  # Rodzic okna dialogowego.
+            "Zapisz metryki",  # Tytuł okna dialogowego.
+            "Wybierz format zapisu metryk:",  # Treść pytania dla użytkownika.
+            format_options,  # Dostępne formaty zapisu.
+            0,  # Domyślnie zaznaczony pierwszy format.
+            False,  # Brak możliwości wpisania własnej wartości.
+        )  # Koniec wywołania okna wyboru.
+        if not accepted:  # Sprawdzenie, czy użytkownik zatwierdził wybór.
+            return  # Zakończenie funkcji po anulowaniu.
+
+        parsed_metrics: dict[str, object] = self._parse_metrics_text(metrics_text)  # Zamiana tekstu raportu na prostą strukturę danych.
+        if selected_format == "JSON":  # Sprawdzenie, czy użytkownik wybrał zapis JSON.
+            default_path: Path = self.base_dir / "metryki.json"  # Domyślna ścieżka pliku JSON.
+            file_path, _ = QFileDialog.getSaveFileName(  # Okno wyboru ścieżki zapisu pliku JSON.
+                self,  # Rodzic okna dialogowego.
+                "Zapisz metryki",  # Tytuł okna zapisu.
+                str(default_path),  # Domyślna ścieżka docelowa.
+                "Pliki JSON (*.json);;Wszystkie pliki (*)",  # Filtr formatów dla pliku JSON.
+            )  # Koniec wywołania okna zapisu.
+            if not file_path:  # Sprawdzenie, czy użytkownik wybrał plik docelowy.
+                return  # Zakończenie funkcji po anulowaniu.
+            payload: dict[str, object] = {  # Budowa pełnego obiektu danych do zapisu JSON.
+                "selected_stage": self._selected_stage(),  # Numer aktualnie wybranego etapu.
+                "active_key_label": self._active_key_label(),  # Informacja o aktywnym trybie klucza.
+                "correct_key": self.correct_key_input.text(),  # Tekst poprawnego klucza.
+                "wrong_key": self.wrong_key_input.text(),  # Tekst błędnego klucza.
+                "metrics_text": metrics_text,  # Surowy tekst raportu metryk.
+                "parsed_metrics": parsed_metrics,  # Ustrukturyzowana wersja raportu metryk.
+            }  # Koniec budowy obiektu JSON.
+            with open(file_path, "w", encoding="utf-8") as output_file:  # Otwarcie pliku wyjściowego w trybie zapisu tekstowego.
+                json.dump(payload, output_file, ensure_ascii=False, indent=2)  # Zapis danych JSON z zachowaniem polskich znaków.
+            QMessageBox.information(self, "Zapis zakończony", f"Zapisano plik:\n{file_path}")  # Potwierdzenie poprawnego zapisu pliku JSON.
+            return  # Zakończenie funkcji po zapisie JSON.
+
+        default_path: Path = self.base_dir / "metryki.csv"  # Domyślna ścieżka pliku CSV.
+        file_path, _ = QFileDialog.getSaveFileName(  # Okno wyboru ścieżki zapisu pliku CSV.
+            self,  # Rodzic okna dialogowego.
+            "Zapisz metryki",  # Tytuł okna zapisu.
+            str(default_path),  # Domyślna ścieżka docelowa.
+            "Pliki CSV (*.csv);;Wszystkie pliki (*)",  # Filtr formatów dla pliku CSV.
+        )  # Koniec wywołania okna zapisu.
+        if not file_path:  # Sprawdzenie, czy użytkownik wybrał plik docelowy.
+            return  # Zakończenie funkcji po anulowaniu.
+        csv_rows: list[tuple[str, str, str]] = self._metrics_to_csv_rows(parsed_metrics)  # Przygotowanie wierszy do zapisu CSV.
+        with open(file_path, "w", encoding="utf-8", newline="") as output_file:  # Otwarcie pliku CSV w trybie zapisu.
+            writer: csv.writer = csv.writer(output_file)  # Utworzenie obiektu zapisującego CSV.
+            writer.writerow(["sekcja", "klucz", "wartość"])  # Zapis nagłówka tabeli CSV.
+            for section_name, metric_key, metric_value in csv_rows:  # Iteracja po przygotowanych wierszach danych.
+                writer.writerow([section_name, metric_key, metric_value])  # Zapis pojedynczego wiersza do pliku CSV.
+        QMessageBox.information(self, "Zapis zakończony", f"Zapisano plik:\n{file_path}")  # Potwierdzenie poprawnego zapisu pliku CSV.
+
+    def _parse_metrics_text(self, metrics_text: str) -> dict[str, object]:  # Konwersja raportu tekstowego na prostą strukturę słownikową.
+        parsed_data: dict[str, object] = {}  # Utworzenie pustego słownika wynikowego.
+        current_section: str = "główne"  # Ustawienie domyślnej sekcji raportu.
+        parsed_data[current_section] = []  # Utworzenie listy dla treści ogólnych w sekcji domyślnej.
+        for raw_line in metrics_text.splitlines():  # Iteracja po wszystkich liniach raportu.
+            line: str = raw_line.strip()  # Usunięcie nadmiarowych spacji z aktualnej linii.
+            if not line:  # Sprawdzenie, czy linia jest pusta.
+                continue  # Pominięcie pustej linii.
+            if line.endswith(":") and not line.startswith("-"):  # Sprawdzenie, czy linia wygląda jak nagłówek sekcji.
+                current_section = line[:-1]  # Ustawienie nowej nazwy sekcji bez końcowego dwukropka.
+                parsed_data.setdefault(current_section, [])  # Utworzenie wpisu sekcji, jeśli jeszcze nie istnieje.
+                continue  # Przejście do kolejnej linii raportu.
+            if line.startswith("-") and ":" in line:  # Sprawdzenie, czy linia zawiera wpis klucz-wartość.
+                item_text: str = line[1:].strip()  # Usunięcie myślnika z początku linii.
+                metric_key: str  # Deklaracja nazwy klucza metryki.
+                metric_value: str  # Deklaracja wartości metryki.
+                metric_key, metric_value = item_text.split(":", 1)  # Rozdzielenie wpisu na klucz i wartość.
+                section_items: object = parsed_data.setdefault(current_section, [])  # Pobranie listy wpisów dla bieżącej sekcji.
+                if isinstance(section_items, list):  # Sprawdzenie, czy sekcja ma postać listy.
+                    section_items.append({metric_key.strip(): metric_value.strip()})  # Dodanie wpisu klucz-wartość do sekcji.
+                continue  # Przejście do kolejnej linii raportu.
+            section_items = parsed_data.setdefault(current_section, [])  # Pobranie listy wpisów dla bieżącej sekcji.
+            if isinstance(section_items, list):  # Sprawdzenie, czy sekcja ma postać listy.
+                section_items.append(line)  # Dodanie zwykłej linii tekstu do bieżącej sekcji.
+        return parsed_data  # Zwrócenie gotowej struktury danych.
+
+    def _metrics_to_csv_rows(self, parsed_metrics: dict[str, object]) -> list[tuple[str, str, str]]:  # Zamiana słownika metryk na listę wierszy CSV.
+        csv_rows: list[tuple[str, str, str]] = []  # Utworzenie pustej listy wynikowych wierszy CSV.
+        for section_name, section_value in parsed_metrics.items():  # Iteracja po wszystkich sekcjach raportu.
+            if isinstance(section_value, list):  # Sprawdzenie, czy sekcja jest listą wpisów.
+                for entry in section_value:  # Iteracja po elementach bieżącej sekcji.
+                    if isinstance(entry, dict):  # Sprawdzenie, czy element sekcji jest parą klucz-wartość.
+                        for metric_key, metric_value in entry.items():  # Iteracja po wszystkich parach klucz-wartość w elemencie.
+                            csv_rows.append((section_name, str(metric_key), str(metric_value)))  # Dodanie sformatowanego wiersza do listy CSV.
+                        continue  # Przejście do kolejnego elementu sekcji.
+                    csv_rows.append((section_name, "opis", str(entry)))  # Dodanie zwykłej linii tekstowej jako wiersza opisowego.
+                continue  # Przejście do kolejnej sekcji raportu.
+            csv_rows.append((section_name, "wartość", str(section_value)))  # Dodanie uproszczonego wiersza dla nieoczekiwanej struktury danych.
+        return csv_rows  # Zwrócenie gotowej listy wierszy CSV.
 
     def _default_save_filename(self, selected_label: str) -> str:  # Build a simple suggested filename for the chosen image type.
         filename_map: dict[str, str] = {
