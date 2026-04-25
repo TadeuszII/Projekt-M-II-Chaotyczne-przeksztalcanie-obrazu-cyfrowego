@@ -110,7 +110,8 @@ def build_scramble_analysis_text(
             "",  # Pusta linia dla czytelności.
             "Porównanie Etapu 1, 2 i 3:",  # Nagłówek wymaganej sekcji porównawczej.
             "- Etap 1: mała utrata struktury obrazu, pełna odwracalność przy poprawnym kluczu, ograniczona wrażliwość na parametry.",  # Aktualna charakterystyka Etapu 1.
-            "- Etap 2 i 3: porównanie zostanie uzupełnione po ich implementacji.",  # Uczciwa informacja o obecnym stanie projektu.
+            "- Etap 2: większa utrata struktury obrazu niż w Etapie 1, pełna odwracalność przy poprawnym kluczu, wyższa wrażliwość na parametry.",  # Aktualna charakterystyka Etapu 2.
+            "- Etap 3: największa utrata struktury obrazu spośród trzech etapów, pełna odwracalność przy poprawnym kluczu, najwyższa wrażliwość na parametry w tej implementacji.",  # Aktualna charakterystyka Etapu 3.
         ]
     )  # Koniec dopisywania sekcji porównawczej.
 

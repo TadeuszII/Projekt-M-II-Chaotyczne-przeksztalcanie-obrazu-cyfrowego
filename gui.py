@@ -7,6 +7,7 @@ from __future__ import annotations  # Allow postponed evaluation of type hints.
 import csv  # Import csv for exporting metrics in table form.
 import json  # Import json for exporting metrics in structured form.
 import sys  # Import sys to access command-line arguments and app exit handling.
+import threading  # Import threading to run heavy non-GUI work in background threads.
 from pathlib import Path  # Import Path for safe filesystem paths.
 
 import cv2  # Import OpenCV as the image-processing library required by the project.
@@ -29,7 +30,9 @@ from stage2_analysis import build_unscramble_analysis_text as build_stage2_unscr
 from stage1_analysis import build_scramble_analysis_text  # Import raportu analizy po scramblingu Etapu 1.
 from stage1_analysis import build_unscramble_analysis_text  # Import raportu analizy po unscramblingu Etapu 1.
 
+from PyQt6.QtCore import QObject  # Import QObject for defining a bridge object with Qt signals.
 from PyQt6.QtCore import Qt  # Import Qt alignment and scaling flags.
+from PyQt6.QtCore import pyqtSignal  # Import pyqtSignal for safely returning worker results to the GUI thread.
 from PyQt6.QtGui import QImage  # Import QImage for converting arrays to Qt images.
 from PyQt6.QtGui import QPixmap  # Import QPixmap for displaying images in labels.
 from PyQt6.QtWidgets import QApplication  # Import the main Qt application object.
@@ -108,6 +111,12 @@ class ImagePreviewLabel(QLabel):  # Define a reusable preview label for image pa
         self.setPixmap(scaled_pixmap)  # Display the scaled pixmap.
 
 
+# ---- Klasa pomocnicza: most dla wyników z wątków ----
+class BackgroundTaskBridge(QObject):  # Define a Qt bridge for thread-safe communication back to the GUI.
+    success_signal = pyqtSignal(object, object)  # Signal carrying the success callback and the computed result.
+    error_signal = pyqtSignal(str, object)  # Signal carrying the task name and the raised exception.
+
+
 # ---- Główna klasa GUI ----
 class ProjectGui(QMainWindow):  # Define the main application window.
     """Main PyQt GUI skeleton for the project."""  # Class docstring.
@@ -119,6 +128,9 @@ class ProjectGui(QMainWindow):  # Define the main application window.
         self.original_image: np.ndarray | None = None  # Reserve storage for the future original image.
         self.scrambled_image: np.ndarray | None = None  # Reserve storage for the future transformed image.
         self.restored_image: np.ndarray | None = None  # Reserve storage for the future restored image.
+        self.is_busy: bool = False  # Store whether a background task is currently running.
+        self.current_task_name: str = ""  # Store the human-readable name of the current background task.
+        self.background_bridge: BackgroundTaskBridge = BackgroundTaskBridge()  # Create the Qt bridge used for background-thread results.
         self.setWindowTitle("M-II Projekt - GUI Skeleton")  # Set the main window title.
         self.resize(1350, 850)  # Set a comfortable default window size.
         self._build_ui()  # Build the whole user interface.
@@ -262,9 +274,56 @@ class ProjectGui(QMainWindow):  # Define the main application window.
         self.unscramble_button.clicked.connect(self._run_unscramble)  # Run the selected unscrambling stage.
         self.reset_button.clicked.connect(self._reset_interface)  # Reset the experiment state in the GUI.
         self.save_button.clicked.connect(self._save_selected_image)  # Handle saving one of the available images.
+        self.background_bridge.success_signal.connect(self._handle_background_success)  # Connect worker success results back to the GUI thread.
+        self.background_bridge.error_signal.connect(self._handle_background_error)  # Connect worker errors back to the GUI thread.
+
+    def _set_busy_state(self, is_busy: bool, task_name: str = "") -> None:  # Aktualizacja stanu zajętości interfejsu podczas pracy w tle.
+        self.is_busy = is_busy  # Zapisanie nowego stanu zajętości aplikacji.
+        self.current_task_name = task_name if is_busy else ""  # Zapisanie nazwy zadania tylko wtedy, gdy aplikacja jest zajęta.
+        self.load_button.setEnabled(not is_busy)  # Zablokowanie lub odblokowanie przycisku wczytywania obrazu.
+        self.scramble_button.setEnabled(not is_busy)  # Zablokowanie lub odblokowanie przycisku scramblingu.
+        self.unscramble_button.setEnabled(not is_busy)  # Zablokowanie lub odblokowanie przycisku unscramblingu.
+        self.reset_button.setEnabled(not is_busy)  # Zablokowanie lub odblokowanie przycisku resetu.
+        self.save_button.setEnabled(not is_busy)  # Zablokowanie lub odblokowanie przycisku zapisu wyniku.
+        self.stage1_radio.setEnabled(not is_busy)  # Zablokowanie lub odblokowanie wyboru Etapu 1.
+        self.stage2_radio.setEnabled(not is_busy)  # Zablokowanie lub odblokowanie wyboru Etapu 2.
+        self.stage3_radio.setEnabled(not is_busy)  # Zablokowanie lub odblokowanie wyboru Etapu 3.
+        self.correct_key_input.setEnabled(not is_busy)  # Zablokowanie lub odblokowanie pola poprawnego klucza.
+        self.wrong_key_input.setEnabled(not is_busy)  # Zablokowanie lub odblokowanie pola błędnego klucza.
+        self.use_wrong_key_checkbox.setEnabled(not is_busy)  # Zablokowanie lub odblokowanie checkboxa błędnego klucza.
+        if is_busy:  # Sprawdzenie, czy przechodzimy do stanu zajętości.
+            self.metrics_box.setPlainText(f"Trwa operacja: {task_name}.\nProszę czekać...")  # Wyświetlenie komunikatu o pracy w tle.
+
+    def _run_in_background(self, task_name: str, worker, on_success) -> None:  # Uruchomienie ciężkiej operacji poza wątkiem GUI.
+        if self.is_busy:  # Sprawdzenie, czy inna operacja jest już uruchomiona.
+            QMessageBox.information(self, "Operacja w toku", f"Najpierw zaczekaj na zakończenie: {self.current_task_name}.")  # Komunikat o już trwającym zadaniu.
+            return  # Zakończenie funkcji bez uruchamiania kolejnego zadania.
+        self._set_busy_state(True, task_name)  # Ustawienie GUI w tryb zajętości.
+
+        def background_runner() -> None:  # Funkcja wykonywana w osobnym wątku roboczym.
+            try:  # Rozpoczęcie obsługi potencjalnych wyjątków w wątku roboczym.
+                result = worker()  # Wykonanie ciężkiej operacji poza wątkiem GUI.
+            except Exception as error:  # Przechwycenie błędu zgłoszonego przez wątek roboczy.
+                self.background_bridge.error_signal.emit(task_name, error)  # Przekazanie błędu z powrotem do wątku GUI przez sygnał Qt.
+                return  # Zakończenie pracy wątku po błędzie.
+            self.background_bridge.success_signal.emit(on_success, result)  # Przekazanie wyniku z powrotem do wątku GUI przez sygnał Qt.
+
+        worker_thread: threading.Thread = threading.Thread(target=background_runner, daemon=True)  # Utworzenie wątku roboczego działającego w tle.
+        worker_thread.start()  # Uruchomienie pracy wątku roboczego.
+
+    def _handle_background_success(self, on_success, result) -> None:  # Obsługa poprawnego zakończenia zadania w tle.
+        self._set_busy_state(False)  # Przywrócenie aktywności interfejsu po zakończeniu zadania.
+        on_success(result)  # Wywołanie funkcji aktualizującej GUI gotowym wynikiem.
+
+    def _handle_background_error(self, task_name: str, error: Exception) -> None:  # Obsługa błędu zgłoszonego przez zadanie w tle.
+        self._set_busy_state(False)  # Przywrócenie aktywności interfejsu po błędzie zadania.
+        QMessageBox.critical(self, "Błąd operacji", f"Operacja '{task_name}' zakończyła się błędem:\n{error}")  # Wyświetlenie komunikatu o błędzie zadania.
 
     # ---- Wczytywanie obrazów ----
     def _load_image(self) -> None:  # Wczytanie obrazu i przypisanie go do wybranego pola podglądu.
+        if self.is_busy:  # Sprawdzenie, czy aplikacja nie wykonuje już innej operacji w tle.
+            QMessageBox.information(self, "Operacja w toku", f"Najpierw zaczekaj na zakończenie: {self.current_task_name}.")  # Komunikat o zajętości aplikacji.
+            return  # Zakończenie funkcji bez rozpoczynania nowego zadania.
         target_options: list[str] = [  # Lista typów obrazów, które użytkownik może wczytać.
             "Obraz oryginalny",  # Opcja wczytania obrazu źródłowego.
             "Obraz przekształcony",  # Opcja wczytania obrazu po scramblingu.
@@ -289,16 +348,24 @@ class ProjectGui(QMainWindow):  # Define the main application window.
         )  # Koniec wywołania okna wyboru pliku.
         if not file_path:  # Sprawdzenie, czy użytkownik wybrał plik.
             return  # Zakończenie funkcji po anulowaniu.
+        selected_path: Path = Path(file_path)  # Zamiana ścieżki pliku na obiekt Path dla wygodniejszej pracy.
+        self._run_in_background(  # Uruchomienie wczytywania obrazu poza wątkiem GUI.
+            "wczytywanie obrazu",  # Nazwa zadania pokazywana użytkownikowi.
+            lambda: self._load_image_worker(selected_path),  # Funkcja robocza wykonująca odczyt pliku obrazu.
+            lambda loaded_image, selected_target=selected_target, selected_path=selected_path: self._finish_load_image(selected_target, selected_path, loaded_image),  # Funkcja kończąca aktualizację GUI po wczytaniu obrazu.
+        )  # Koniec uruchamiania zadania w tle.
 
-        loaded_image: np.ndarray | None = cv2.imread(file_path, cv2.IMREAD_COLOR)  # Wczytanie obrazu z dysku w trybie kolorowym.
+    def _load_image_worker(self, image_path: Path) -> np.ndarray:  # Wczytanie obrazu z dysku w wątku roboczym.
+        loaded_image: np.ndarray | None = cv2.imread(str(image_path), cv2.IMREAD_COLOR)  # Wczytanie obrazu z dysku w trybie kolorowym.
         if loaded_image is None:  # Sprawdzenie, czy plik został poprawnie odczytany jako obraz.
-            QMessageBox.critical(self, "Błąd wczytywania", "Nie udało się wczytać wybranego obrazu.")  # Komunikat o błędzie wczytania.
-            return  # Zakończenie funkcji po błędzie.
+            raise ValueError("Nie udało się wczytać wybranego obrazu.")  # Zgłoszenie błędu do obsługi w wątku GUI.
+        return loaded_image  # Zwrócenie poprawnie wczytanego obrazu.
 
-        self._assign_loaded_image(selected_target, loaded_image)  # Przypisanie wczytanego obrazu do wybranego miejsca w aplikacji.
+    def _finish_load_image(self, target_label: str, image_path: Path, loaded_image: np.ndarray) -> None:  # Zakończenie obsługi wczytania obrazu w wątku GUI.
+        self._assign_loaded_image(target_label, loaded_image)  # Przypisanie wczytanego obrazu do wybranego miejsca w aplikacji.
         self.metrics_box.setPlainText(  # Aktualizacja pola analizy po wczytaniu obrazu.
-            f"Wczytano plik: {Path(file_path).name}\n"  # Nazwa wczytanego pliku.
-            f"Typ obrazu: {selected_target}\n"  # Informacja, do którego pola przypisano obraz.
+            f"Wczytano plik: {image_path.name}\n"  # Nazwa wczytanego pliku.
+            f"Typ obrazu: {target_label}\n"  # Informacja, do którego pola przypisano obraz.
             f"Rozdzielczość: {loaded_image.shape[1]} x {loaded_image.shape[0]} px\n\n"  # Rozdzielczość obrazu.
             f"{self._current_stage_description()}"  # Opis działania aktualnie wybranego etapu.
         )  # Koniec ustawiania tekstu analizy.
@@ -333,55 +400,37 @@ class ProjectGui(QMainWindow):  # Define the main application window.
         if selected_stage not in (1, 2, 3):  # Sprawdzenie, czy użytkownik wybrał obsługiwany etap.
             QMessageBox.information(self, "Etap niedostępny", "Obecnie zaimplementowane są Etap 1, Etap 2 i Etap 3.")  # Informacja o braku innych etapów.
             return  # Zakończenie funkcji dla nieobsługiwanego etapu.
+        original_image: np.ndarray = self.original_image.copy()  # Utworzenie kopii obrazu wejściowego do pracy w tle.
+        correct_key_text: str = self.correct_key_input.text()  # Pobranie tekstu poprawnego klucza w wątku GUI.
+        wrong_key_text: str = self.wrong_key_input.text()  # Pobranie tekstu błędnego klucza w wątku GUI.
+        used_key_label: str = self._active_key_label()  # Pobranie etykiety aktywnego klucza w wątku GUI.
+        key_text: str = self._active_key_text()  # Pobranie aktywnego klucza w wątku GUI.
+        self._run_in_background(  # Uruchomienie scramblingu poza wątkiem GUI.
+            "scrambling",  # Nazwa zadania pokazywana użytkownikowi.
+            lambda: self._scramble_worker(selected_stage, original_image, key_text, correct_key_text, wrong_key_text, used_key_label),  # Funkcja robocza wykonująca scrambling i analizę.
+            self._finish_scramble,  # Funkcja kończąca aktualizację GUI po scramblingu.
+        )  # Koniec uruchamiania zadania w tle.
 
-        try:  # Rozpoczęcie sekcji obsługi potencjalnego błędu klucza.
-            key_text: str = self._active_key_text()  # Pobranie aktywnego klucza z GUI.
-            if selected_stage == 1:  # Sprawdzenie, czy aktywny jest Etap 1.
-                self.scrambled_image = stage1_scramble(self.original_image, key_text)  # Wykonanie scramblingu Etapu 1.
-            elif selected_stage == 2:  # Obsługa Etapu 2.
-                self.scrambled_image = stage2_scramble(self.original_image, key_text)  # Wykonanie scramblingu Etapu 2.
-            else:  # Obsługa Etapu 3.
-                self.scrambled_image = stage3_scramble(self.original_image, key_text)  # Wykonanie scramblingu Etapu 3.
-        except ValueError as error:  # Obsługa błędnego lub pustego klucza.
-            QMessageBox.warning(self, "Błędny klucz", str(error))  # Wyświetlenie komunikatu o błędzie klucza.
-            return  # Zakończenie funkcji po błędzie.
+    def _scramble_worker(self, selected_stage: int, original_image: np.ndarray, key_text: str, correct_key_text: str, wrong_key_text: str, used_key_label: str) -> dict[str, object]:  # Wykonanie scramblingu i analizy w wątku roboczym.
+        if selected_stage == 1:  # Sprawdzenie, czy aktywny jest Etap 1.
+            scrambled_image: np.ndarray = stage1_scramble(original_image, key_text)  # Wykonanie scramblingu Etapu 1.
+            analysis_text: str = build_scramble_analysis_text(original_image, scrambled_image, correct_key_text, wrong_key_text, used_key_label)  # Zbudowanie raportu analitycznego dla Etapu 1.
+        elif selected_stage == 2:  # Sprawdzenie, czy aktywny jest Etap 2.
+            scrambled_image = stage2_scramble(original_image, key_text)  # Wykonanie scramblingu Etapu 2.
+            analysis_text = build_stage2_scramble_analysis_text(original_image, scrambled_image, correct_key_text, wrong_key_text, used_key_label)  # Zbudowanie raportu analitycznego dla Etapu 2.
+        else:  # Obsługa Etapu 3.
+            scrambled_image = stage3_scramble(original_image, key_text)  # Wykonanie scramblingu Etapu 3.
+            analysis_text = build_stage3_scramble_analysis_text(original_image, scrambled_image, correct_key_text, wrong_key_text, used_key_label)  # Zbudowanie raportu analitycznego dla Etapu 3.
+        return {"scrambled_image": scrambled_image, "analysis_text": analysis_text}  # Zwrócenie wyniku obliczeń do wątku GUI.
 
+    def _finish_scramble(self, result: dict[str, object]) -> None:  # Aktualizacja GUI po zakończeniu scramblingu w tle.
+        scrambled_image: np.ndarray = result["scrambled_image"]  # Pobranie obrazu po scramblingu z wyniku zadania.
+        analysis_text: str = result["analysis_text"]  # Pobranie raportu analitycznego z wyniku zadania.
+        self.scrambled_image = scrambled_image  # Zapisanie obrazu przekształconego w stanie aplikacji.
         self.scrambled_preview.set_numpy_image(self.scrambled_image)  # Aktualizacja podglądu obrazu przekształconego.
         self.restored_image = None  # Wyczyszczenie starego obrazu odtworzonego.
         self.restored_preview.set_placeholder("Brak obrazu odtworzonego")  # Wyzerowanie podglądu obrazu odtworzonego.
-        if selected_stage == 1:  # Sprawdzenie, czy aktywny jest Etap 1.
-            self.metrics_box.setPlainText(  # Ustawienie raportu analitycznego dla Etapu 1 po scramblingu.
-                build_scramble_analysis_text(
-                    self.original_image,
-                    self.scrambled_image,
-                    self.correct_key_input.text(),
-                    self.wrong_key_input.text(),
-                    self._active_key_label(),
-                )
-            )  # Koniec ustawiania raportu Etapu 1.
-            return  # Zakończenie funkcji po ustawieniu raportu Etapu 1.
-
-        if selected_stage == 3:  # Sprawdzenie, czy aktywny jest Etap 3.
-            self.metrics_box.setPlainText(  # Ustawienie raportu analitycznego dla Etapu 3 po scramblingu.
-                build_stage3_scramble_analysis_text(  # Budowa raportu eksperymentalnego dla scramblingu Etapu 3.
-                    self.original_image,  # Obraz oryginalny jako punkt odniesienia.
-                    self.scrambled_image,  # Obraz po scramblingu.
-                    self.correct_key_input.text(),  # Tekst klucza poprawnego.
-                    self.wrong_key_input.text(),  # Tekst klucza błędnego.
-                    self._active_key_label(),  # Informacja, który klucz był użyty operacyjnie.
-                )  # Koniec budowy raportu.
-            )  # Koniec ustawiania raportu Etapu 3.
-            return  # Zakończenie funkcji po ustawieniu raportu Etapu 3.
-
-        self.metrics_box.setPlainText(  # Ustawienie raportu analitycznego dla Etapu 2 po scramblingu.
-            build_stage2_scramble_analysis_text(  # Budowa raportu eksperymentalnego dla scramblingu Etapu 2.
-                self.original_image,  # Obraz oryginalny jako punkt odniesienia.
-                self.scrambled_image,  # Obraz po scramblingu.
-                self.correct_key_input.text(),  # Tekst klucza poprawnego.
-                self.wrong_key_input.text(),  # Tekst klucza błędnego.
-                self._active_key_label(),  # Informacja, który klucz był użyty operacyjnie.
-            )  # Koniec budowy raportu.
-        )  # Koniec ustawiania raportu Etapu 2.
+        self.metrics_box.setPlainText(analysis_text)  # Wyświetlenie raportu analitycznego po scramblingu.
 
     def _run_unscramble(self) -> None:  # Wykonanie odwrotnej transformacji dla aktualnie wybranego etapu.
         if self.scrambled_image is None:  # Sprawdzenie, czy istnieje obraz przekształcony do odtworzenia.
@@ -392,56 +441,36 @@ class ProjectGui(QMainWindow):  # Define the main application window.
         if selected_stage not in (1, 2, 3):  # Sprawdzenie, czy użytkownik wybrał obsługiwany etap.
             QMessageBox.information(self, "Etap niedostępny", "Obecnie zaimplementowane są Etap 1, Etap 2 i Etap 3.")  # Informacja o braku innych etapów.
             return  # Zakończenie funkcji dla nieobsługiwanego etapu.
+        scrambled_image: np.ndarray = self.scrambled_image.copy()  # Utworzenie kopii obrazu przekształconego do pracy w tle.
+        original_image: np.ndarray | None = self.original_image.copy() if self.original_image is not None else None  # Utworzenie kopii obrazu oryginalnego, jeśli jest dostępny.
+        correct_key_text: str = self.correct_key_input.text()  # Pobranie tekstu poprawnego klucza w wątku GUI.
+        wrong_key_text: str = self.wrong_key_input.text()  # Pobranie tekstu błędnego klucza w wątku GUI.
+        used_key_label: str = self._active_key_label()  # Pobranie etykiety aktywnego klucza w wątku GUI.
+        key_text: str = self._active_key_text()  # Pobranie aktywnego klucza w wątku GUI.
+        self._run_in_background(  # Uruchomienie unscramblingu poza wątkiem GUI.
+            "unscrambling",  # Nazwa zadania pokazywana użytkownikowi.
+            lambda: self._unscramble_worker(selected_stage, scrambled_image, original_image, key_text, correct_key_text, wrong_key_text, used_key_label),  # Funkcja robocza wykonująca unscrambling i analizę.
+            self._finish_unscramble,  # Funkcja kończąca aktualizację GUI po unscramblingu.
+        )  # Koniec uruchamiania zadania w tle.
 
-        try:  # Rozpoczęcie sekcji obsługi potencjalnego błędu klucza.
-            key_text: str = self._active_key_text()  # Pobranie aktywnego klucza z GUI.
-            if selected_stage == 1:  # Sprawdzenie, czy aktywny jest Etap 1.
-                self.restored_image = stage1_unscramble(self.scrambled_image, key_text)  # Wykonanie odwrotnej transformacji Etapu 1.
-            elif selected_stage == 2:  # Obsługa Etapu 2.
-                self.restored_image = stage2_unscramble(self.scrambled_image, key_text)  # Wykonanie odwrotnej transformacji Etapu 2.
-            else:  # Obsługa Etapu 3.
-                self.restored_image = stage3_unscramble(self.scrambled_image, key_text)  # Wykonanie odwrotnej transformacji Etapu 3.
-        except ValueError as error:  # Obsługa błędnego lub pustego klucza.
-            QMessageBox.warning(self, "Błędny klucz", str(error))  # Wyświetlenie komunikatu o błędzie klucza.
-            return  # Zakończenie funkcji po błędzie.
-
-        self.restored_preview.set_numpy_image(self.restored_image)  # Aktualizacja podglądu obrazu odtworzonego.
+    def _unscramble_worker(self, selected_stage: int, scrambled_image: np.ndarray, original_image: np.ndarray | None, key_text: str, correct_key_text: str, wrong_key_text: str, used_key_label: str) -> dict[str, object]:  # Wykonanie unscramblingu i analizy w wątku roboczym.
         if selected_stage == 1:  # Sprawdzenie, czy aktywny jest Etap 1.
-            self.metrics_box.setPlainText(  # Ustawienie raportu analitycznego dla Etapu 1 po unscramblingu.
-                build_unscramble_analysis_text(
-                    self.original_image,
-                    self.scrambled_image,
-                    self.restored_image,
-                    self.correct_key_input.text(),
-                    self.wrong_key_input.text(),
-                    self._active_key_label(),
-                )
-            )  # Koniec ustawiania raportu Etapu 1.
-            return  # Zakończenie funkcji po ustawieniu raportu Etapu 1.
+            restored_image: np.ndarray = stage1_unscramble(scrambled_image, key_text)  # Wykonanie odwrotnej transformacji Etapu 1.
+            analysis_text: str = build_unscramble_analysis_text(original_image, scrambled_image, restored_image, correct_key_text, wrong_key_text, used_key_label)  # Zbudowanie raportu analitycznego dla Etapu 1.
+        elif selected_stage == 2:  # Sprawdzenie, czy aktywny jest Etap 2.
+            restored_image = stage2_unscramble(scrambled_image, key_text)  # Wykonanie odwrotnej transformacji Etapu 2.
+            analysis_text = build_stage2_unscramble_analysis_text(original_image, scrambled_image, restored_image, correct_key_text, wrong_key_text, used_key_label)  # Zbudowanie raportu analitycznego dla Etapu 2.
+        else:  # Obsługa Etapu 3.
+            restored_image = stage3_unscramble(scrambled_image, key_text)  # Wykonanie odwrotnej transformacji Etapu 3.
+            analysis_text = build_stage3_unscramble_analysis_text(original_image, scrambled_image, restored_image, correct_key_text, wrong_key_text, used_key_label)  # Zbudowanie raportu analitycznego dla Etapu 3.
+        return {"restored_image": restored_image, "analysis_text": analysis_text}  # Zwrócenie wyniku obliczeń do wątku GUI.
 
-        if selected_stage == 3:  # Sprawdzenie, czy aktywny jest Etap 3.
-            self.metrics_box.setPlainText(  # Ustawienie raportu analitycznego dla Etapu 3 po unscramblingu.
-                build_stage3_unscramble_analysis_text(  # Budowa raportu eksperymentalnego dla unscramblingu Etapu 3.
-                    self.original_image,  # Obraz oryginalny do porównania.
-                    self.scrambled_image,  # Obraz wejściowy po scramblingu.
-                    self.restored_image,  # Obraz odtworzony.
-                    self.correct_key_input.text(),  # Tekst klucza poprawnego.
-                    self.wrong_key_input.text(),  # Tekst klucza błędnego.
-                    self._active_key_label(),  # Informacja, który klucz był użyty operacyjnie.
-                )  # Koniec budowy raportu.
-            )  # Koniec ustawiania raportu Etapu 3.
-            return  # Zakończenie funkcji po ustawieniu raportu Etapu 3.
-
-        self.metrics_box.setPlainText(  # Ustawienie raportu analitycznego dla Etapu 2 po unscramblingu.
-            build_stage2_unscramble_analysis_text(  # Budowa raportu eksperymentalnego dla unscramblingu Etapu 2.
-                self.original_image,  # Obraz oryginalny do porównania.
-                self.scrambled_image,  # Obraz wejściowy po scramblingu.
-                self.restored_image,  # Obraz odtworzony.
-                self.correct_key_input.text(),  # Tekst klucza poprawnego.
-                self.wrong_key_input.text(),  # Tekst klucza błędnego.
-                self._active_key_label(),  # Informacja, który klucz był użyty operacyjnie.
-            )  # Koniec budowy raportu.
-        )  # Koniec ustawiania raportu Etapu 2.
+    def _finish_unscramble(self, result: dict[str, object]) -> None:  # Aktualizacja GUI po zakończeniu unscramblingu w tle.
+        restored_image: np.ndarray = result["restored_image"]  # Pobranie obrazu odtworzonego z wyniku zadania.
+        analysis_text: str = result["analysis_text"]  # Pobranie raportu analitycznego z wyniku zadania.
+        self.restored_image = restored_image  # Zapisanie obrazu odtworzonego w stanie aplikacji.
+        self.restored_preview.set_numpy_image(self.restored_image)  # Aktualizacja podglądu obrazu odtworzonego.
+        self.metrics_box.setPlainText(analysis_text)  # Wyświetlenie raportu analitycznego po unscramblingu.
 
     def _selected_stage(self) -> int:  # Return the selected stage number.
         checked_button: QRadioButton | None = self.stage_button_group.checkedButton()  # Pobranie aktualnie zaznaczonego przycisku etapu.
@@ -471,6 +500,9 @@ class ProjectGui(QMainWindow):  # Define the main application window.
         )  # Koniec zwracanego tekstu.
 
     def _reset_interface(self) -> None:  # Wyczyszczenie aktualnego stanu eksperymentu w GUI.
+        if self.is_busy:  # Sprawdzenie, czy aplikacja nie wykonuje aktualnie zadania w tle.
+            QMessageBox.information(self, "Operacja w toku", f"Najpierw zaczekaj na zakończenie: {self.current_task_name}.")  # Komunikat o niemożności resetu podczas pracy w tle.
+            return  # Zakończenie funkcji bez resetowania stanu aplikacji.
         self.original_image = None  # Wyzerowanie obrazu oryginalnego.
         self.scrambled_image = None  # Wyzerowanie obrazu przekształconego.
         self.restored_image = None  # Wyzerowanie obrazu odtworzonego.
@@ -483,6 +515,9 @@ class ProjectGui(QMainWindow):  # Define the main application window.
         self.metrics_box.setPlainText(self._default_metrics_text())  # Przywrócenie domyślnego tekstu pola analizy.
 
     def _save_selected_image(self) -> None:  # Zapis wyniku po wyborze typu danych do zapisania.
+        if self.is_busy:  # Sprawdzenie, czy aplikacja nie wykonuje aktualnie zadania w tle.
+            QMessageBox.information(self, "Operacja w toku", f"Najpierw zaczekaj na zakończenie: {self.current_task_name}.")  # Komunikat o niemożności uruchomienia zapisu podczas pracy w tle.
+            return  # Zakończenie funkcji bez rozpoczynania zapisu.
         save_options: list[str] = ["Obraz", "Metryki"]  # Lista dostępnych typów danych do zapisania.
         selected_option, accepted = QInputDialog.getItem(  # Zapytanie użytkownika, co chce zapisać.
             self,  # Rodzic okna dialogowego.
@@ -537,10 +572,18 @@ class ProjectGui(QMainWindow):  # Define the main application window.
         )  # Koniec wywołania okna zapisu.
         if not file_path:  # Stop if the user canceled the save dialog.
             return  # Zakończenie funkcji po anulowaniu.
-        if cv2.imwrite(file_path, selected_image):  # Save the chosen image with OpenCV.
-            QMessageBox.information(self, "Zapis zakończony", f"Zapisano plik:\n{file_path}")  # Potwierdzenie poprawnego zapisu pliku obrazu.
-            return  # Zakończenie funkcji po poprawnym zapisie.
-        QMessageBox.critical(self, "Błąd zapisu", f"Nie udało się zapisać pliku:\n{file_path}")  # Komunikat o błędzie zapisu obrazu.
+        image_copy: np.ndarray = selected_image.copy()  # Utworzenie kopii obrazu do bezpiecznego zapisu w wątku roboczym.
+        target_path: Path = Path(file_path)  # Zamiana ścieżki zapisu na obiekt Path.
+        self._run_in_background(  # Uruchomienie zapisu obrazu poza wątkiem GUI.
+            "zapis obrazu",  # Nazwa zadania pokazywana użytkownikowi.
+            lambda: self._save_image_worker(target_path, image_copy),  # Funkcja robocza zapisująca obraz na dysk.
+            self._finish_save_result,  # Funkcja kończąca aktualizację GUI po zapisie obrazu.
+        )  # Koniec uruchamiania zadania w tle.
+
+    def _save_image_worker(self, file_path: Path, image: np.ndarray) -> Path:  # Zapis obrazu do pliku w wątku roboczym.
+        if not cv2.imwrite(str(file_path), image):  # Sprawdzenie, czy obraz został poprawnie zapisany przez OpenCV.
+            raise ValueError(f"Nie udało się zapisać pliku:\n{file_path}")  # Zgłoszenie błędu do obsługi w wątku GUI.
+        return file_path  # Zwrócenie ścieżki poprawnie zapisanego pliku.
 
     def _save_metrics_result(self) -> None:  # Zapis metryk i analizy do pliku JSON lub CSV.
         metrics_text: str = self.metrics_box.toPlainText().strip()  # Pobranie aktualnego tekstu metryk z pola analizy.
@@ -579,9 +622,12 @@ class ProjectGui(QMainWindow):  # Define the main application window.
                 "metrics_text": metrics_text,  # Surowy tekst raportu metryk.
                 "parsed_metrics": parsed_metrics,  # Ustrukturyzowana wersja raportu metryk.
             }  # Koniec budowy obiektu JSON.
-            with open(file_path, "w", encoding="utf-8") as output_file:  # Otwarcie pliku wyjściowego w trybie zapisu tekstowego.
-                json.dump(payload, output_file, ensure_ascii=False, indent=2)  # Zapis danych JSON z zachowaniem polskich znaków.
-            QMessageBox.information(self, "Zapis zakończony", f"Zapisano plik:\n{file_path}")  # Potwierdzenie poprawnego zapisu pliku JSON.
+            target_path: Path = Path(file_path)  # Zamiana ścieżki zapisu JSON na obiekt Path.
+            self._run_in_background(  # Uruchomienie zapisu JSON poza wątkiem GUI.
+                "zapis metryk JSON",  # Nazwa zadania pokazywana użytkownikowi.
+                lambda payload=payload, target_path=target_path: self._save_metrics_json_worker(target_path, payload),  # Funkcja robocza zapisująca metryki JSON.
+                self._finish_save_result,  # Funkcja kończąca aktualizację GUI po zapisie metryk JSON.
+            )  # Koniec uruchamiania zadania w tle.
             return  # Zakończenie funkcji po zapisie JSON.
 
         default_path: Path = self.base_dir / "metryki.csv"  # Domyślna ścieżka pliku CSV.
@@ -594,12 +640,28 @@ class ProjectGui(QMainWindow):  # Define the main application window.
         if not file_path:  # Sprawdzenie, czy użytkownik wybrał plik docelowy.
             return  # Zakończenie funkcji po anulowaniu.
         csv_rows: list[tuple[str, str, str]] = self._metrics_to_csv_rows(parsed_metrics)  # Przygotowanie wierszy do zapisu CSV.
+        target_path = Path(file_path)  # Zamiana ścieżki zapisu CSV na obiekt Path.
+        self._run_in_background(  # Uruchomienie zapisu CSV poza wątkiem GUI.
+            "zapis metryk CSV",  # Nazwa zadania pokazywana użytkownikowi.
+            lambda csv_rows=csv_rows, target_path=target_path: self._save_metrics_csv_worker(target_path, csv_rows),  # Funkcja robocza zapisująca metryki CSV.
+            self._finish_save_result,  # Funkcja kończąca aktualizację GUI po zapisie metryk CSV.
+        )  # Koniec uruchamiania zadania w tle.
+
+    def _save_metrics_json_worker(self, file_path: Path, payload: dict[str, object]) -> Path:  # Zapis metryk do pliku JSON w wątku roboczym.
+        with open(file_path, "w", encoding="utf-8") as output_file:  # Otwarcie pliku wyjściowego w trybie zapisu tekstowego.
+            json.dump(payload, output_file, ensure_ascii=False, indent=2)  # Zapis danych JSON z zachowaniem polskich znaków.
+        return file_path  # Zwrócenie ścieżki poprawnie zapisanego pliku JSON.
+
+    def _save_metrics_csv_worker(self, file_path: Path, csv_rows: list[tuple[str, str, str]]) -> Path:  # Zapis metryk do pliku CSV w wątku roboczym.
         with open(file_path, "w", encoding="utf-8", newline="") as output_file:  # Otwarcie pliku CSV w trybie zapisu.
             writer: csv.writer = csv.writer(output_file)  # Utworzenie obiektu zapisującego CSV.
             writer.writerow(["sekcja", "klucz", "wartość"])  # Zapis nagłówka tabeli CSV.
             for section_name, metric_key, metric_value in csv_rows:  # Iteracja po przygotowanych wierszach danych.
                 writer.writerow([section_name, metric_key, metric_value])  # Zapis pojedynczego wiersza do pliku CSV.
-        QMessageBox.information(self, "Zapis zakończony", f"Zapisano plik:\n{file_path}")  # Potwierdzenie poprawnego zapisu pliku CSV.
+        return file_path  # Zwrócenie ścieżki poprawnie zapisanego pliku CSV.
+
+    def _finish_save_result(self, saved_path: Path) -> None:  # Wyświetlenie potwierdzenia po zakończeniu zapisu w tle.
+        QMessageBox.information(self, "Zapis zakończony", f"Zapisano plik:\n{saved_path}")  # Potwierdzenie poprawnego zapisu pliku.
 
     def _parse_metrics_text(self, metrics_text: str) -> dict[str, object]:  # Konwersja raportu tekstowego na prostą strukturę słownikową.
         parsed_data: dict[str, object] = {}  # Utworzenie pustego słownika wynikowego.
