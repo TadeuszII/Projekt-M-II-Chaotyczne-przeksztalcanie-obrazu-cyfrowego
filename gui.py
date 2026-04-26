@@ -1,5 +1,5 @@
 # ---- Moduł / dokumentacja ----
-"""PyQt GUI for the M-II project."""  # Module docstring describing this file.
+"""PyQt GUI skeleton for the M-II project."""  # Module docstring describing this file.
 
 # ---- Importy ----
 from __future__ import annotations  # Allow postponed evaluation of type hints.
@@ -27,6 +27,8 @@ from stage3_analysis import build_scramble_analysis_text as build_stage3_scrambl
 from stage3_analysis import build_unscramble_analysis_text as build_stage3_unscramble_analysis_text  # Import raportu analizy po unscramblingu Etapu 3.
 from stage2_analysis import build_scramble_analysis_text as build_stage2_scramble_analysis_text  # Import raportu analizy po scramblingu Etapu 2.
 from stage2_analysis import build_unscramble_analysis_text as build_stage2_unscramble_analysis_text  # Import raportu analizy po unscramblingu Etapu 2.
+from stage1_analysis import build_scramble_analysis_text  # Import raportu analizy po scramblingu Etapu 1.
+from stage1_analysis import build_unscramble_analysis_text  # Import raportu analizy po unscramblingu Etapu 1.
 
 from PyQt6.QtCore import QObject  # Import QObject for defining a bridge object with Qt signals.
 from PyQt6.QtCore import Qt  # Import Qt alignment and scaling flags.
